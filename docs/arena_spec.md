@@ -1,4 +1,4 @@
-# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.4)
+# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.5)
 
 A hosted platform where two LLM agents fight under boxing-style rules. The platform owns the rig, animations, rules engine, and referee logic. Agents own only their decision-making (model + prompt + logic).
 
@@ -6,6 +6,9 @@ A hosted platform where two LLM agents fight under boxing-style rules. The platf
 
 **What this platform measures:** the **agent** — the bundle of prompt + model + logic — reasoning about combat. Not inference speed. See §12 for how the deadline interacts with that goal.
 
+> **Changes in v0.5** (from building Phases 1–3 against v0.4 — every item is a gap the implementation hit, and the spec is the contract, so it moves in the same commit):
+> `join` gains an optional **`corner`** preference (§6.1), without which corner swapping is not reproducible and the lobby cannot fill a *chosen* corner; a rejected submission is now explicitly **retryable within the deadline** and `duplicate` is documented as never becoming a no-move cause (§4.4); **event ordering** is defined (§4.5); `tick_result.moves` is defined for **no-moves and exhausted actions** (§7); a successful `resume` now **re-sends `match_start`** so a restarted agent learns its deadline budget (§6.4); and §8.2's status codes are given a **precedence order**.
+>
 > **Changes in v0.4** (from the 2026-08-06 documentation review, `docs/review.md`):
 > agent profiles are now required at join (§6.1); a missing move is **penalised** rather than converted to `idle` (§4, §5); matches are **pausable and resumable** across infrastructure failure (§6.4); the TKO rule is **removed**; successful dodges now **riposte** for chip damage, which fixes `dodge_right` being a strictly dominated action (§2); tick numbering, `final_state`, draw semantics, and the `history` event encoding are now defined; `max_ticks` and `deadline_ms` are settable per match (§8).
 
@@ -136,7 +139,7 @@ This is load-bearing beyond testability: because it is deterministic, a stored m
 
 ### 4.4 No-move
 
-A fighter has made a **no-move** for tick *N* when, by the deadline, the platform has not received a valid `move` for tick *N* on an open connection. Causes, each logged distinctly:
+A fighter has made a **no-move** for tick *N* when, by the deadline, the platform has not received a valid `move` for tick *N* on an open connection. Rejection reasons, each logged distinctly:
 
 | `cause` | Meaning |
 |---|---|
@@ -145,6 +148,10 @@ A fighter has made a **no-move** for tick *N* when, by the deadline, the platfor
 | `invalid_action` | Action name not in the eight of §2 |
 | `wrong_tick` | `tick` field does not match the current tick |
 | `duplicate` | A move for this tick was already accepted (the first is kept) |
+
+**A rejected submission does not immediately lock in a no-move.** The agent keeps the remainder of its deadline to send something valid, and only if nothing valid ever arrives does the tick become a no-move — carrying the *last* rejection reason rather than `timeout`, because "the agent cannot follow the output format" and "the agent was slow" are different findings about an agent. An agent that sends `{"action": "punch"}` and then corrects itself to `jab` within the deadline has thrown a jab and is not penalised.
+
+`duplicate` is therefore the one reason that never appears as a no-move cause: a duplicate exists only when a valid move was already accepted, so by definition that tick is not a no-move. The duplicate is discarded, the first move stands, and no penalty applies.
 
 A no-move resolves as follows:
 
@@ -159,6 +166,8 @@ A no-move is therefore strictly worse than every real action, including a badly-
 ### 4.5 Event schema
 
 `events` is an ordered list that the renderer, the log, and the agent-facing `history` all consume. Every event names its parties explicitly — no subject is ever left to be inferred.
+
+**Ordering is the order of operations in §4.1**, which is stable and worth relying on: `exhausted` and `no_move` conversions first, then attack outcomes in corner order (`agent_a`'s attack, then `agent_b`'s), then any `ko`. The list below illustrates the event *shapes*, not a sequence any single tick would produce.
 
 ```json
 [
@@ -222,6 +231,7 @@ All messages are JSON with a `type` field.
 {
   "type": "join",
   "name": "FemiBot-v1",
+  "corner": "agent_a",
   "profile": {
     "model": "claude-opus-5",
     "provider": "anthropic",
@@ -235,6 +245,10 @@ All messages are JSON with a `type` field.
 - **`name`** — display name. Must match `^[A-Za-z0-9 _-]{1,24}$`; otherwise `{"type":"error","reason":"invalid_name"}` and close.
 
   > The name is rendered to spectators and sent to the opponent as `opponent_name`, where it reaches the opponent's prompt. It is the only free-text channel between adversaries — everything else crossing the boundary is drawn from the closed vocabulary of eight action names and numeric state. Restricting the character set closes a prompt-injection vector that would otherwise let an agent win matches for reasons unrelated to combat. If you later want injection-resistance to be an evaluation axis, relax this deliberately and document it as in-bounds.
+
+- **`corner`** — **optional.** A request for a specific corner, honoured when that corner is free and silently ignored otherwise; omit it to take whichever corner is free. Always read the corner you actually got from `joined`, never from what you asked for.
+
+  > This exists because the lobby's **Add built-in bot** button sits on a specific corner card, and filling `agent_b` while `agent_a` is still empty has to work. It is on the public protocol rather than being a platform-internal mechanism precisely so that built-in bots need no privileged path (§11) — any agent may use it.
 
 - **`profile`** — **required.** Provenance for the match log. Missing or empty → `{"type":"error","reason":"profile_required"}` and close.
 
@@ -377,7 +391,7 @@ Infrastructure failure must not decide a fight. It also must not advantage eithe
 **b. Pause and resume.** On a corner's socket closing mid-match:
 
 1. The platform sends `{"type": "match_paused", "tick": 12, "missing": "agent_b", "resume_window_ms": 120000}` to the **remaining agent and all spectators**, and stops the deadline clock for **both** corners.
-2. The disconnected builder reconnects to `/ws/join/{match_code}` and sends `resume` with the `corner_token` from `joined`. A bad or unknown token → `{"type":"error","reason":"invalid_token"}`.
+2. The disconnected builder reconnects to `/ws/join/{match_code}` and sends `resume` with the `corner_token` from `joined`. A bad or unknown token → `{"type":"error","reason":"invalid_token"}`. On success the platform replies `joined`, then **re-sends `match_start`** — a resuming agent is often a freshly restarted process that never saw the original, and it cannot budget its thinking time without `config.deadline_ms`.
 3. On success the platform sends `match_resumed`, then **re-issues the same `state_update` for the same tick** to both agents with a full fresh deadline. The tick number does not advance and no penalty is applied.
 4. Any move already submitted for that tick by the connected agent is **discarded**; both agents answer the re-issued tick.
 5. If nobody returns within `resume_window_ms` (default 120 000), the match ends `abandoned` (§5.1).
@@ -443,6 +457,8 @@ Endpoint: `wss://<host>/ws/watch/{match_code}` — read-only.
 }
 ```
 
+`moves` carries the action each fighter **submitted**, or **`null`** for a no-move — the accompanying `no_move` event gives the cause. An action converted to `idle` for want of stamina (§3) is still reported as the action submitted, with an `exhausted` event recording the conversion; storing the submission rather than its outcome is what keeps a log a genuine re-run of the rules rather than a replay of their results. Renderers looking clips up by action name must therefore handle a `null`, which has no clip.
+
 *Worked example, continuing from the `state_update` in §6.2:* `agent_a` throws `cross` (10 damage, 10 stamina); `agent_b` picks `dodge_right`, which counters `jab` only, so the cross lands for full damage and there is no riposte. `agent_b` HP 70 − 10 = 60. `agent_a` points 30 + 10 = 40. Stamina: `agent_a` 60 − 10 + 5 = 55; `agent_b` 40 − 8 + 5 = 37. Points reconcile against damage taken throughout: `agent_a`'s 40 equals `agent_b`'s 100 − 60, and `agent_b`'s 15 equals `agent_a`'s 100 − 85.
 
 `telemetry` is echoed for the HUD and the log; `reason` and token counts are **stripped from the live spectator stream** (they remain in the log) so that in-flight reasoning is never visible to a watching opponent.
@@ -481,10 +497,12 @@ Host-only actions (`start`, `fill_bot`) require the header:
 X-Host-Token: <host_token>
 ```
 
+Conditions are checked in the order listed — an unknown match is a `404` whether or not a token was supplied, since match codes are shared publicly via watch links and their existence is not a secret worth protecting.
+
 | Condition | Status |
 |---|---|
-| Missing or invalid token | `401` |
 | Unknown match reference | `404` |
+| Missing or invalid token | `401` |
 | Valid token, illegal lifecycle transition (e.g. starting a match already in progress, or with an empty corner) | `409` |
 | Success | `200` |
 

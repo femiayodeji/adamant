@@ -1,0 +1,202 @@
+/**
+ * Wire types for ADAM Arena, transcribed from docs/arena_spec.md 6-8.
+ *
+ * Spectator-facing messages and the log are ABSOLUTE (`agent_a` / `agent_b`) —
+ * the frontend never speaks the egocentric agent vocabulary (spec 1.1).
+ */
+
+export type Corner = 'agent_a' | 'agent_b';
+
+export const CORNERS: readonly Corner[] = ['agent_a', 'agent_b'];
+
+/** The eight action names of spec 2. Clip name IS the action name. */
+export type ActionName =
+  | 'jab'
+  | 'cross'
+  | 'hook'
+  | 'block_high'
+  | 'block_low'
+  | 'dodge_left'
+  | 'dodge_right'
+  | 'idle';
+
+export interface FighterState {
+  hp: number;
+  stamina: number;
+  points: number;
+  penalties: number;
+}
+
+export interface AgentProfile {
+  model?: string;
+  provider?: string;
+  prompt_version?: string;
+  temperature?: number;
+  agent_version?: string;
+  [key: string]: unknown;
+}
+
+export interface CornerInfo {
+  name: string;
+  profile?: AgentProfile;
+}
+
+export interface MatchConfig {
+  max_ticks: number;
+  deadline_ms: number;
+  resume_window_ms?: number;
+}
+
+/* ---------------------------------------------------------------- events (4.5) */
+
+export interface HitEvent {
+  type: 'hit';
+  attacker: Corner;
+  defender: Corner;
+  action: string;
+  damage: number;
+}
+export interface BlockedEvent {
+  type: 'blocked';
+  attacker: Corner;
+  defender: Corner;
+  action: string;
+  defense: string;
+}
+export interface DodgedEvent {
+  type: 'dodged';
+  attacker: Corner;
+  defender: Corner;
+  action: string;
+  defense: string;
+  riposte?: number;
+}
+export interface ExhaustedEvent {
+  type: 'exhausted';
+  who: Corner;
+  attempted: string;
+  stamina: number;
+}
+export interface NoMoveEvent {
+  type: 'no_move';
+  who: Corner;
+  cause: 'timeout' | 'malformed' | 'invalid_action' | 'wrong_tick' | 'duplicate' | string;
+  penalty: number;
+}
+export interface KoEvent {
+  type: 'ko';
+  who: Corner;
+}
+
+export type ArenaEvent =
+  | HitEvent
+  | BlockedEvent
+  | DodgedEvent
+  | ExhaustedEvent
+  | NoMoveEvent
+  | KoEvent;
+
+/* ------------------------------------------------- spectator messages (7) */
+
+export interface LobbyUpdate {
+  type: 'lobby_update';
+  corners: Record<Corner, CornerInfo | null>;
+}
+
+export interface SpectatorMatchStart {
+  type: 'match_start';
+  schema_version?: number;
+  match_code?: string;
+  agents: Record<Corner, CornerInfo>;
+  config: MatchConfig;
+  started_at?: string;
+}
+
+export interface TickTelemetry {
+  latency_ms?: number;
+  fallback?: boolean;
+  [key: string]: unknown;
+}
+
+export interface TickResult {
+  type: 'tick_result';
+  tick: number;
+  /** Action name per corner. May be absent/unknown on a no-move — see SPEC_NOTES.md #6. */
+  moves: Partial<Record<Corner, string>>;
+  events: ArenaEvent[];
+  state: Record<Corner, FighterState>;
+  telemetry?: Partial<Record<Corner, TickTelemetry>>;
+}
+
+export interface MatchPaused {
+  type: 'match_paused';
+  tick: number;
+  missing: Corner;
+  resume_window_ms: number;
+}
+
+export interface MatchResumed {
+  type: 'match_resumed';
+  tick?: number;
+}
+
+export type EndReason = 'ko' | 'points' | 'draw' | 'abandoned';
+
+export interface MatchEnd {
+  type: 'match_end';
+  /** null on a draw — the key is always present (spec 5.1). */
+  winner: Corner | null;
+  reason: EndReason;
+  final_tick: number;
+  final_state: Record<Corner, FighterState>;
+}
+
+export type SpectatorMessage =
+  | LobbyUpdate
+  | SpectatorMatchStart
+  | TickResult
+  | MatchPaused
+  | MatchResumed
+  | MatchEnd;
+
+/* ------------------------------------------------------------- REST (8) */
+
+export interface CreateMatchResponse {
+  match_id: string;
+  match_code: string;
+  host_token: string;
+  watch_url?: string;
+}
+
+export type MatchStatus = 'lobby' | 'in_progress' | 'paused' | 'finished' | 'abandoned';
+
+/** Shape of GET /api/matches/{ref} — field names beyond `status` are not pinned
+ *  down by the spec, so everything optional is read defensively. SPEC_NOTES.md #5. */
+export interface MatchStatusResponse {
+  status: MatchStatus;
+  match_id?: string;
+  match_code?: string;
+  corners?: Record<Corner, CornerInfo | null>;
+  config?: MatchConfig;
+  result?: MatchEnd | null;
+}
+
+/** GET /api/matches/{ref}/log (spec 7, "Log format"). */
+export interface MatchLog {
+  schema_version: number;
+  match_start: SpectatorMatchStart;
+  ticks: TickResult[];
+  match_end: MatchEnd | null;
+}
+
+export type BotName = 'random' | 'jab' | 'cycle' | 'frequency' | 'mixer';
+
+export const BOTS: readonly BotName[] = ['random', 'jab', 'cycle', 'frequency', 'mixer'];
+
+export const BOT_BLURBS: Record<BotName, string> = {
+  random: 'Uniform over the eight actions — the floor.',
+  jab: 'Always jab. A designed trap: blocking it draws.',
+  cycle: 'Fixed period-3/5 pattern. Tests pattern detection.',
+  frequency: 'Counters your most-used action so far.',
+  mixer: 'Near-equilibrium mix — the ceiling.',
+};

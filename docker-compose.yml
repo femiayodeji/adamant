@@ -1,0 +1,42 @@
+# Local run/stop. `docker compose up -d` / `docker compose down`.
+#
+# The same image is what deploys to Render later; compose only supplies the port
+# mapping, the log volume, and the environment a host would otherwise inject.
+
+services:
+  arena:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adam-arena:latest
+    container_name: adam-arena
+    ports:
+      - "${ARENA_PORT:-8000}:8000"
+    environment:
+      PORT: 8000
+      ARENA_LOG_DIR: /data/logs
+      ARENA_LOG_LEVEL: ${ARENA_LOG_LEVEL:-info}
+      # Same-origin by default — the API and the static export are one process.
+      # Set this only if the UI is served from somewhere else.
+      ARENA_CORS_ORIGINS: ${ARENA_CORS_ORIGINS:-}
+    volumes:
+      # Named, not bind-mounted: the logs must outlive `down` and a rebuild.
+      # Remove them deliberately with `docker compose down -v`.
+      - arena-logs:/data/logs
+    restart: unless-stopped
+    # Give in-flight matches a chance to finish their tick and fsync the log
+    # before the container is killed.
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  arena-logs:

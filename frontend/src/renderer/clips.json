@@ -1,0 +1,723 @@
+{
+  "_comment": [
+    "The whole clip library for ADAM Arena, authored as data (docs/skeleton.md conventions).",
+    "",
+    "Poses are joint -> {x,y,z} rotation OFFSETS FROM THE T-POSE REST, in degrees, exactly as",
+    "docs/skeleton.md defines them. 'stance' is the named STANCE pose: the visual origin.",
+    "",
+    "Every clip key's 'pose' is a PARTIAL OVERRIDE ON TOP OF stance: a joint that is not",
+    "mentioned holds its stance value. An empty pose {} therefore IS stance, which is how the",
+    "'every clip starts and ends at STANCE' rule is enforced structurally rather than by hand",
+    "(see tools/pose_check.py, which fails the build data if a non-terminal clip breaks it).",
+    "",
+    "'_root' is root motion: a translation offset of the Hips node in rig units (cm), in the",
+    "fighter's own frame (+x = the fighter's left, +y = up, +z = toward the opponent).",
+    "'_rootRot' is whole-body rotation in degrees, pre-multiplied onto the Hips rotation; it is",
+    "root motion, not a pelvis bend, so it is not bound by the Hips range in the skeleton map.",
+    "Neither has an entry in docs/skeleton.md's SKELETON_MAP — see SPEC_NOTES.md #2.",
+    "",
+    "'_root.y' is normally computed, not authored: clips with \"ground\": true (the default) get",
+    "their hips height solved per keyframe at load time so the lowest toe stays on the canvas",
+    "floor while the knees bend. 'ko' opts out and authors its own fall.",
+    "",
+    "'f' is a frame index at 30 fps; 'frames' is the clip length in frames.",
+    "Clip name IS the action name from arena_spec.md 2 — no mapping table anywhere."
+  ],
+  "fps": 30,
+  "stance": {
+    "_note": "Orthodox boxing guard: bladed to the fighter's right so the left shoulder leads, weight centred, knees soft, both fists up.",
+    "Hips": { "x": 5, "y": -25 },
+    "Spine": { "x": 8, "y": -10 },
+    "Spine1": { "x": 5, "y": -6 },
+    "Spine2": { "x": 3, "y": -4 },
+    "Neck": { "x": 4, "y": 16 },
+    "Head": { "x": 4, "y": 14 },
+    "LeftShoulder": { "z": 8 },
+    "LeftArm": { "x": -20, "y": -30, "z": -62 },
+    "LeftForeArm": { "y": -110 },
+    "LeftHand": { "x": -10 },
+    "RightShoulder": { "z": -8 },
+    "RightArm": { "x": -20, "y": 40, "z": 66 },
+    "RightForeArm": { "y": 122 },
+    "RightHand": { "x": -10 },
+    "LeftUpLeg": { "x": -12, "z": 8 },
+    "LeftLeg": { "x": 18 },
+    "LeftFoot": { "x": -4 },
+    "RightUpLeg": { "x": 10, "z": -8 },
+    "RightLeg": { "x": 22 },
+    "RightFoot": { "x": -10 }
+  },
+  "clips": {
+    "stance": {
+      "_note": "Seamless idle loop played whenever the clip queue is empty. First and last keys are both stance, so the loop is continuous.",
+      "frames": 45,
+      "loop": true,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 11,
+          "pose": {
+            "Spine": { "x": 10, "y": -10 },
+            "Spine1": { "x": 6, "y": -6 },
+            "Neck": { "x": 6, "y": 16 },
+            "LeftArm": { "x": -20, "y": -32, "z": -64 },
+            "RightArm": { "x": -20, "y": 42, "z": 68 },
+            "LeftLeg": { "x": 21 },
+            "RightLeg": { "x": 25 }
+          }
+        },
+        {
+          "f": 22,
+          "pose": {
+            "Spine": { "x": 6, "y": -11 },
+            "Head": { "x": 4, "y": 16 },
+            "LeftArm": { "x": -20, "y": -28, "z": -60 },
+            "RightArm": { "x": -20, "y": 38, "z": 64 },
+            "LeftLeg": { "x": 16 },
+            "RightLeg": { "x": 20 },
+            "_root": { "z": 1 }
+          }
+        },
+        {
+          "f": 34,
+          "pose": {
+            "Spine": { "x": 10, "y": -9 },
+            "Spine1": { "x": 6, "y": -6 },
+            "LeftArm": { "x": -20, "y": -33, "z": -64 },
+            "RightArm": { "x": -20, "y": 43, "z": 68 },
+            "LeftLeg": { "x": 21 },
+            "RightLeg": { "x": 25 }
+          }
+        },
+        { "f": 45, "pose": {} }
+      ]
+    },
+
+    "jab": {
+      "_note": "Lead (left) hand straight. Small weight load, snap out, snap back.",
+      "frames": 15,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 3,
+          "pose": {
+            "Hips": { "x": 5, "y": -30 },
+            "LeftArm": { "x": -20, "y": -24, "z": -60 },
+            "LeftForeArm": { "y": -118 },
+            "_root": { "z": -2 }
+          }
+        },
+        {
+          "f": 7,
+          "pose": {
+            "Hips": { "x": 4, "y": -12 },
+            "Spine": { "x": 6, "y": -2 },
+            "Spine1": { "x": 4, "y": 0 },
+            "Spine2": { "x": 2, "y": 0 },
+            "Neck": { "x": 2, "y": 8 },
+            "Head": { "x": 2, "y": 8 },
+            "LeftShoulder": { "z": 16 },
+            "LeftArm": { "x": -10, "y": -72, "z": -12 },
+            "LeftForeArm": { "y": -12 },
+            "LeftHand": { "x": 0 },
+            "LeftUpLeg": { "x": -16 },
+            "LeftLeg": { "x": 14 },
+            "_root": { "z": 6 }
+          }
+        },
+        {
+          "f": 10,
+          "pose": {
+            "Hips": { "x": 5, "y": -20 },
+            "LeftShoulder": { "z": 12 },
+            "LeftArm": { "x": -16, "y": -55, "z": -34 },
+            "LeftForeArm": { "y": -70 },
+            "_root": { "z": 2 }
+          }
+        },
+        { "f": 15, "pose": {} }
+      ]
+    },
+
+    "cross": {
+      "_note": "Rear (right) hand straight. Hips rotate through it, rear heel pivots.",
+      "frames": 15,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 3,
+          "pose": {
+            "Hips": { "x": 5, "y": -34 },
+            "RightArm": { "x": -20, "y": 44, "z": 70 },
+            "RightForeArm": { "y": 128 },
+            "_root": { "z": -2 }
+          }
+        },
+        {
+          "f": 8,
+          "pose": {
+            "Hips": { "x": 3, "y": 5 },
+            "Spine": { "x": 10, "y": 8 },
+            "Spine1": { "x": 6, "y": 6 },
+            "Spine2": { "x": 4, "y": 4 },
+            "Neck": { "x": 2, "y": 4 },
+            "Head": { "x": 2, "y": 4 },
+            "RightShoulder": { "z": -16 },
+            "RightArm": { "x": -10, "y": 78, "z": 14 },
+            "RightForeArm": { "y": 15 },
+            "RightHand": { "x": 0 },
+            "RightUpLeg": { "x": 4, "y": -12, "z": -6 },
+            "RightLeg": { "x": 16 },
+            "RightFoot": { "x": -24 },
+            "LeftUpLeg": { "x": -14 },
+            "LeftLeg": { "x": 20 },
+            "_root": { "z": 8 }
+          }
+        },
+        {
+          "f": 11,
+          "pose": {
+            "Hips": { "x": 4, "y": -14 },
+            "Spine": { "x": 8, "y": 0 },
+            "RightShoulder": { "z": -12 },
+            "RightArm": { "x": -16, "y": 58, "z": 44 },
+            "RightForeArm": { "y": 80 },
+            "_root": { "z": 3 }
+          }
+        },
+        { "f": 15, "pose": {} }
+      ]
+    },
+
+    "hook": {
+      "_note": "Lead (left) hook. Loads away, then a horizontal arc driven from the hips with the elbow up.",
+      "frames": 15,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 4,
+          "pose": {
+            "Hips": { "x": 5, "y": -36 },
+            "Spine": { "x": 8, "y": -16 },
+            "LeftArm": { "x": -14, "y": -10, "z": -40 },
+            "LeftForeArm": { "y": -100 },
+            "_root": { "x": -2, "z": -2 }
+          }
+        },
+        {
+          "f": 8,
+          "pose": {
+            "Hips": { "x": 3, "y": 8 },
+            "Spine": { "x": 6, "y": 10 },
+            "Spine1": { "x": 4, "y": 8 },
+            "Spine2": { "x": 2, "y": 5 },
+            "Neck": { "x": 2, "y": 6 },
+            "Head": { "x": 2, "y": 6 },
+            "LeftShoulder": { "z": 18 },
+            "LeftArm": { "x": 0, "y": -50, "z": 8 },
+            "LeftForeArm": { "y": -85 },
+            "LeftHand": { "x": 0 },
+            "LeftUpLeg": { "x": -14, "y": -10 },
+            "LeftLeg": { "x": 16 },
+            "LeftFoot": { "x": -16 },
+            "RightUpLeg": { "x": 8, "y": -8 },
+            "_root": { "z": 5 }
+          }
+        },
+        {
+          "f": 11,
+          "pose": {
+            "Hips": { "x": 4, "y": -6 },
+            "LeftShoulder": { "z": 12 },
+            "LeftArm": { "x": -10, "y": -35, "z": -25 },
+            "LeftForeArm": { "y": -100 },
+            "_root": { "z": 2 }
+          }
+        },
+        { "f": 15, "pose": {} }
+      ]
+    },
+
+    "block_high": {
+      "_note": "Gloves up beside the head, elbows in, chin tucked, brief hold.",
+      "frames": 12,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 4,
+          "pose": {
+            "Spine": { "x": 14, "y": -8 },
+            "Spine1": { "x": 10, "y": -5 },
+            "Neck": { "x": 12, "y": 14 },
+            "Head": { "x": 8, "y": 12 },
+            "LeftShoulder": { "z": 14 },
+            "LeftArm": { "x": -15, "y": -40, "z": -40 },
+            "LeftForeArm": { "y": -125 },
+            "LeftHand": { "x": -20 },
+            "RightShoulder": { "z": -14 },
+            "RightArm": { "x": -15, "y": 44, "z": 44 },
+            "RightForeArm": { "y": 128 },
+            "RightHand": { "x": -20 },
+            "LeftUpLeg": { "x": -16, "z": 8 },
+            "LeftLeg": { "x": 26 },
+            "RightUpLeg": { "x": 8, "z": -8 },
+            "RightLeg": { "x": 30 }
+          }
+        },
+        {
+          "f": 8,
+          "pose": {
+            "Spine": { "x": 14, "y": -8 },
+            "Spine1": { "x": 10, "y": -5 },
+            "Neck": { "x": 12, "y": 14 },
+            "Head": { "x": 8, "y": 12 },
+            "LeftShoulder": { "z": 14 },
+            "LeftArm": { "x": -15, "y": -40, "z": -40 },
+            "LeftForeArm": { "y": -125 },
+            "LeftHand": { "x": -20 },
+            "RightShoulder": { "z": -14 },
+            "RightArm": { "x": -15, "y": 44, "z": 44 },
+            "RightForeArm": { "y": 128 },
+            "RightHand": { "x": -20 },
+            "LeftUpLeg": { "x": -16, "z": 8 },
+            "LeftLeg": { "x": 26 },
+            "RightUpLeg": { "x": 8, "z": -8 },
+            "RightLeg": { "x": 30 }
+          }
+        },
+        { "f": 12, "pose": {} }
+      ]
+    },
+
+    "block_low": {
+      "_note": "Elbows dropped onto the ribs, forearms across the body, deeper crouch.",
+      "frames": 12,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 4,
+          "pose": {
+            "Hips": { "x": 12, "y": -25 },
+            "Spine": { "x": 24, "y": -10 },
+            "Spine1": { "x": 16, "y": -6 },
+            "Spine2": { "x": 10, "y": -4 },
+            "Neck": { "x": 18, "y": 16 },
+            "Head": { "x": 10, "y": 14 },
+            "LeftArm": { "x": -25, "y": -20, "z": -72 },
+            "LeftForeArm": { "y": -100 },
+            "RightArm": { "x": -25, "y": 24, "z": 76 },
+            "RightForeArm": { "y": 104 },
+            "LeftUpLeg": { "x": -20, "z": 10 },
+            "LeftLeg": { "x": 34 },
+            "RightUpLeg": { "x": 6, "z": -10 },
+            "RightLeg": { "x": 38 }
+          }
+        },
+        {
+          "f": 8,
+          "pose": {
+            "Hips": { "x": 12, "y": -25 },
+            "Spine": { "x": 24, "y": -10 },
+            "Spine1": { "x": 16, "y": -6 },
+            "Spine2": { "x": 10, "y": -4 },
+            "Neck": { "x": 18, "y": 16 },
+            "Head": { "x": 10, "y": 14 },
+            "LeftArm": { "x": -25, "y": -20, "z": -72 },
+            "LeftForeArm": { "y": -100 },
+            "RightArm": { "x": -25, "y": 24, "z": 76 },
+            "RightForeArm": { "y": 104 },
+            "LeftUpLeg": { "x": -20, "z": 10 },
+            "LeftLeg": { "x": 34 },
+            "RightUpLeg": { "x": 6, "z": -10 },
+            "RightLeg": { "x": 38 }
+          }
+        },
+        { "f": 12, "pose": {} }
+      ]
+    },
+
+    "dodge_left": {
+      "_note": "Slip to the fighter's OWN left (+x local). Hips shift, torso side-bends, head leaves the centreline. Mirrored for agent_b by the renderer, per skeleton.md.",
+      "frames": 12,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 3,
+          "pose": {
+            "Hips": { "x": 5, "y": -30, "z": -8 },
+            "Spine": { "x": 10, "y": -10, "z": -12 },
+            "Spine1": { "x": 6, "y": -6, "z": -8 },
+            "Neck": { "x": 4, "y": 10, "z": -8 },
+            "Head": { "x": 4, "y": 10, "z": -6 },
+            "LeftArm": { "x": -20, "y": -30, "z": -66 },
+            "RightArm": { "x": -20, "y": 40, "z": 70 },
+            "LeftUpLeg": { "x": -12, "z": 16 },
+            "LeftLeg": { "x": 24 },
+            "RightUpLeg": { "x": 6, "z": -4 },
+            "RightLeg": { "x": 26 },
+            "_root": { "x": 8 }
+          }
+        },
+        {
+          "f": 7,
+          "pose": {
+            "Hips": { "x": 5, "y": -30, "z": -10 },
+            "Spine": { "x": 12, "y": -10, "z": -16 },
+            "Spine1": { "x": 8, "y": -6, "z": -10 },
+            "Spine2": { "x": 4, "y": -4, "z": -6 },
+            "Neck": { "x": 4, "y": 12, "z": -10 },
+            "Head": { "x": 4, "y": 12, "z": -8 },
+            "LeftArm": { "x": -20, "y": -30, "z": -66 },
+            "RightArm": { "x": -20, "y": 40, "z": 70 },
+            "LeftUpLeg": { "x": -12, "z": 20 },
+            "LeftLeg": { "x": 26 },
+            "RightUpLeg": { "x": 6, "z": -2 },
+            "RightLeg": { "x": 28 },
+            "_root": { "x": 14 }
+          }
+        },
+        { "f": 12, "pose": {} }
+      ]
+    },
+
+    "dodge_right": {
+      "_note": "Slip to the fighter's OWN right (-x local) — for an orthodox stance this rolls back over the rear leg.",
+      "frames": 12,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 3,
+          "pose": {
+            "Hips": { "x": 5, "y": -20, "z": 8 },
+            "Spine": { "x": 10, "y": -8, "z": 12 },
+            "Spine1": { "x": 6, "y": -4, "z": 8 },
+            "Neck": { "x": 4, "y": 20, "z": 8 },
+            "Head": { "x": 4, "y": 16, "z": 6 },
+            "LeftArm": { "x": -20, "y": -30, "z": -58 },
+            "RightArm": { "x": -20, "y": 40, "z": 62 },
+            "RightUpLeg": { "x": 10, "z": -16 },
+            "RightLeg": { "x": 30 },
+            "LeftUpLeg": { "x": -14, "z": 6 },
+            "LeftLeg": { "x": 22 },
+            "_root": { "x": -8 }
+          }
+        },
+        {
+          "f": 7,
+          "pose": {
+            "Hips": { "x": 5, "y": -18, "z": 10 },
+            "Spine": { "x": 12, "y": -6, "z": 16 },
+            "Spine1": { "x": 8, "y": -4, "z": 10 },
+            "Spine2": { "x": 4, "y": -2, "z": 6 },
+            "Neck": { "x": 4, "y": 22, "z": 10 },
+            "Head": { "x": 4, "y": 18, "z": 8 },
+            "LeftArm": { "x": -20, "y": -30, "z": -58 },
+            "RightArm": { "x": -20, "y": 40, "z": 62 },
+            "RightUpLeg": { "x": 10, "z": -20 },
+            "RightLeg": { "x": 32 },
+            "LeftUpLeg": { "x": -14, "z": 4 },
+            "LeftLeg": { "x": 24 },
+            "_root": { "x": -14 }
+          }
+        },
+        { "f": 12, "pose": {} }
+      ]
+    },
+
+    "idle": {
+      "_note": "The idle ACTION (arena_spec 2: +20 stamina). Deliberately distinct from the stance loop — guard drops, deep breath, guard back up — so a spectator can see a fighter choosing to recover. See SPEC_NOTES.md #3.",
+      "frames": 45,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 12,
+          "pose": {
+            "Spine": { "x": -4, "y": -8 },
+            "Spine1": { "x": -3, "y": -4 },
+            "Spine2": { "x": -2, "y": -2 },
+            "Neck": { "x": -8, "y": 12 },
+            "Head": { "x": -6, "y": 10 },
+            "LeftShoulder": { "z": 18 },
+            "LeftArm": { "x": -20, "y": -18, "z": -78 },
+            "LeftForeArm": { "y": -85 },
+            "RightShoulder": { "z": -18 },
+            "RightArm": { "x": -20, "y": 22, "z": 80 },
+            "RightForeArm": { "y": 92 },
+            "LeftLeg": { "x": 12 },
+            "RightLeg": { "x": 14 }
+          }
+        },
+        {
+          "f": 26,
+          "pose": {
+            "Spine": { "x": 2, "y": -8 },
+            "Neck": { "x": 4, "y": 12 },
+            "Head": { "x": 4, "y": 10 },
+            "LeftShoulder": { "z": 4 },
+            "LeftArm": { "x": -20, "y": -16, "z": -82 },
+            "LeftForeArm": { "y": -78 },
+            "RightShoulder": { "z": -4 },
+            "RightArm": { "x": -20, "y": 20, "z": 84 },
+            "RightForeArm": { "y": 86 },
+            "LeftLeg": { "x": 14 },
+            "RightLeg": { "x": 16 }
+          }
+        },
+        {
+          "f": 36,
+          "pose": {
+            "LeftArm": { "x": -20, "y": -24, "z": -70 },
+            "LeftForeArm": { "y": -95 },
+            "RightArm": { "x": -20, "y": 28, "z": 72 },
+            "RightForeArm": { "y": 104 }
+          }
+        },
+        { "f": 45, "pose": {} }
+      ]
+    },
+
+    "exhausted": {
+      "_note": "Played instead of idle when the tick carried an 'exhausted' event (arena_spec 3): the action was unaffordable and got converted. Hands drop, heavy breathing — the stamina economy made legible. See SPEC_NOTES.md #4.",
+      "frames": 45,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 10,
+          "pose": {
+            "Hips": { "x": 12, "y": -25 },
+            "Spine": { "x": 26, "y": -10 },
+            "Spine1": { "x": 16, "y": -6 },
+            "Spine2": { "x": 8, "y": -4 },
+            "Neck": { "x": 24, "y": 16 },
+            "Head": { "x": 14, "y": 14 },
+            "LeftShoulder": { "z": 2 },
+            "LeftArm": { "x": -20, "y": -8, "z": -86 },
+            "LeftForeArm": { "y": -30 },
+            "RightShoulder": { "z": -2 },
+            "RightArm": { "x": -20, "y": 10, "z": 88 },
+            "RightForeArm": { "y": 34 },
+            "LeftUpLeg": { "x": -18, "z": 8 },
+            "LeftLeg": { "x": 30 },
+            "RightUpLeg": { "x": 4, "z": -8 },
+            "RightLeg": { "x": 34 }
+          }
+        },
+        {
+          "f": 22,
+          "pose": {
+            "Hips": { "x": 10, "y": -25 },
+            "Spine": { "x": 18, "y": -10 },
+            "Spine1": { "x": 10, "y": -6 },
+            "Neck": { "x": 16, "y": 16 },
+            "Head": { "x": 10, "y": 14 },
+            "LeftShoulder": { "z": 16 },
+            "LeftArm": { "x": -20, "y": -10, "z": -84 },
+            "LeftForeArm": { "y": -38 },
+            "RightShoulder": { "z": -16 },
+            "RightArm": { "x": -20, "y": 12, "z": 86 },
+            "RightForeArm": { "y": 42 },
+            "LeftLeg": { "x": 26 },
+            "RightLeg": { "x": 30 }
+          }
+        },
+        {
+          "f": 32,
+          "pose": {
+            "Hips": { "x": 12, "y": -25 },
+            "Spine": { "x": 27, "y": -10 },
+            "Spine1": { "x": 17, "y": -6 },
+            "Neck": { "x": 25, "y": 16 },
+            "Head": { "x": 15, "y": 14 },
+            "LeftShoulder": { "z": 2 },
+            "LeftArm": { "x": -20, "y": -8, "z": -87 },
+            "LeftForeArm": { "y": -30 },
+            "RightShoulder": { "z": -2 },
+            "RightArm": { "x": -20, "y": 10, "z": 89 },
+            "RightForeArm": { "y": 34 },
+            "LeftUpLeg": { "x": -18, "z": 8 },
+            "LeftLeg": { "x": 30 },
+            "RightUpLeg": { "x": 4, "z": -8 },
+            "RightLeg": { "x": 34 }
+          }
+        },
+        { "f": 45, "pose": {} }
+      ]
+    },
+
+    "hit_react": {
+      "_note": "Played on a 'hit' event against this fighter. Head snaps back, weight goes onto the rear leg, recover.",
+      "frames": 12,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 3,
+          "pose": {
+            "Hips": { "x": -6, "y": -25, "z": 4 },
+            "Spine": { "x": -10, "y": -10, "z": 6 },
+            "Spine1": { "x": -8, "y": -6, "z": 4 },
+            "Spine2": { "x": -5, "y": -4, "z": 2 },
+            "Neck": { "x": -30, "y": 16, "z": 12 },
+            "Head": { "x": -22, "y": 14, "z": 8 },
+            "LeftArm": { "x": -20, "y": -26, "z": -52 },
+            "RightArm": { "x": -20, "y": 36, "z": 56 },
+            "LeftUpLeg": { "x": -4, "z": 8 },
+            "LeftLeg": { "x": 12 },
+            "RightUpLeg": { "x": 16, "z": -8 },
+            "RightLeg": { "x": 32 },
+            "_root": { "x": -2, "z": -10 }
+          }
+        },
+        {
+          "f": 7,
+          "pose": {
+            "Hips": { "x": 8, "y": -25 },
+            "Spine": { "x": 12, "y": -10 },
+            "Neck": { "x": -6, "y": 16 },
+            "Head": { "x": -2, "y": 14 },
+            "_root": { "z": -4 }
+          }
+        },
+        { "f": 12, "pose": {} }
+      ]
+    },
+
+    "riposte": {
+      "_note": "Played on a 'dodged' event where this fighter is the defender (arena_spec 2 riposte, 5 chip damage). A short counter flick with the rear hand out of the slip.",
+      "frames": 12,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 4,
+          "pose": {
+            "Hips": { "x": 4, "y": 0 },
+            "Spine": { "x": 6, "y": 8 },
+            "Spine1": { "x": 4, "y": 6 },
+            "Spine2": { "x": 2, "y": 4 },
+            "Neck": { "x": 2, "y": 6 },
+            "Head": { "x": 2, "y": 6 },
+            "RightShoulder": { "z": -16 },
+            "RightArm": { "x": -8, "y": 74, "z": 10 },
+            "RightForeArm": { "y": 18 },
+            "RightHand": { "x": 0 },
+            "RightUpLeg": { "x": 6, "y": -10, "z": -6 },
+            "_root": { "z": 6 }
+          }
+        },
+        {
+          "f": 8,
+          "pose": {
+            "Hips": { "x": 4, "y": -14 },
+            "RightShoulder": { "z": -12 },
+            "RightArm": { "x": -16, "y": 58, "z": 44 },
+            "RightForeArm": { "y": 80 },
+            "_root": { "z": 2 }
+          }
+        },
+        { "f": 12, "pose": {} }
+      ]
+    },
+
+    "ko": {
+      "_note": "Terminal — the only clip exempt from returning to STANCE. Stagger, buckle, fall backwards, settle supine with the feet toward the opponent. Root motion is hand-authored, so grounding is off.",
+      "frames": 45,
+      "terminal": true,
+      "ground": false,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 6,
+          "pose": {
+            "Hips": { "x": -12, "y": -25 },
+            "Spine": { "x": -16, "y": -10 },
+            "Spine1": { "x": -10, "y": -6 },
+            "Neck": { "x": -34, "y": 16 },
+            "Head": { "x": -26, "y": 14 },
+            "LeftShoulder": { "z": 2 },
+            "LeftArm": { "x": -20, "y": -20, "z": -80 },
+            "LeftForeArm": { "y": -60 },
+            "RightShoulder": { "z": -2 },
+            "RightArm": { "x": -20, "y": 24, "z": 84 },
+            "RightForeArm": { "y": 64 },
+            "LeftUpLeg": { "x": -10, "z": 8 },
+            "LeftLeg": { "x": 16 },
+            "RightUpLeg": { "x": 18, "z": -8 },
+            "RightLeg": { "x": 40 },
+            "_root": { "y": -4, "z": -14 }
+          }
+        },
+        {
+          "f": 16,
+          "pose": {
+            "Hips": { "x": -10, "y": -10, "z": -6 },
+            "Spine": { "x": -24, "y": -6 },
+            "Spine1": { "x": -14 },
+            "Neck": { "x": -20, "y": 10 },
+            "Head": { "x": -14, "y": 8 },
+            "LeftArm": { "x": -20, "y": 10, "z": -55 },
+            "LeftForeArm": { "y": -40 },
+            "RightArm": { "x": -20, "y": -10, "z": 58 },
+            "RightForeArm": { "y": 44 },
+            "LeftUpLeg": { "x": -34, "z": 10 },
+            "LeftLeg": { "x": 66 },
+            "RightUpLeg": { "x": -22, "z": -10 },
+            "RightLeg": { "x": 74 },
+            "_rootRot": { "x": -30 },
+            "_root": { "y": -24, "z": -26 }
+          }
+        },
+        {
+          "f": 30,
+          "pose": {
+            "Hips": { "x": 0, "y": -4 },
+            "Spine": { "x": -8, "y": -2 },
+            "Spine1": { "x": -4 },
+            "Spine2": { "x": 0 },
+            "Neck": { "x": 14, "y": 4 },
+            "Head": { "x": 8, "y": 4 },
+            "LeftShoulder": { "z": 0 },
+            "LeftArm": { "x": -10, "y": -6, "z": -34 },
+            "LeftForeArm": { "y": -26 },
+            "RightShoulder": { "z": 0 },
+            "RightArm": { "x": -10, "y": 8, "z": 36 },
+            "RightForeArm": { "y": 30 },
+            "LeftUpLeg": { "x": -14, "z": 12 },
+            "LeftLeg": { "x": 26 },
+            "RightUpLeg": { "x": -10, "z": -10 },
+            "RightLeg": { "x": 20 },
+            "LeftFoot": { "x": 10 },
+            "RightFoot": { "x": 10 },
+            "_rootRot": { "x": -84 },
+            "_root": { "y": -84, "z": -36 }
+          }
+        },
+        {
+          "f": 45,
+          "pose": {
+            "Hips": { "x": 0, "y": 0 },
+            "Spine": { "x": -4, "y": 0 },
+            "Spine1": { "x": -2, "y": 0 },
+            "Spine2": { "x": 0, "y": 0 },
+            "Neck": { "x": 16, "y": 0 },
+            "Head": { "x": 10, "y": 0 },
+            "LeftShoulder": { "z": 0 },
+            "LeftArm": { "x": -8, "y": -4, "z": -28 },
+            "LeftForeArm": { "y": -18 },
+            "LeftHand": { "x": 0 },
+            "RightShoulder": { "z": 0 },
+            "RightArm": { "x": -8, "y": 6, "z": 30 },
+            "RightForeArm": { "y": 22 },
+            "RightHand": { "x": 0 },
+            "LeftUpLeg": { "x": -8, "z": 14 },
+            "LeftLeg": { "x": 16 },
+            "RightUpLeg": { "x": -6, "z": -12 },
+            "RightLeg": { "x": 12 },
+            "LeftFoot": { "x": 6 },
+            "RightFoot": { "x": 6 },
+            "_rootRot": { "x": -88 },
+            "_root": { "y": -87, "z": -38 }
+          }
+        }
+      ]
+    }
+  }
+}

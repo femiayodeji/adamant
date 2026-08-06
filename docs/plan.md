@@ -12,7 +12,7 @@ ADAM Arena is a **hosted agent combat evaluation platform**. Two LLM-powered age
 
 **The unit of evaluation is the agent** — prompt + model + logic as a bundle — reasoning about combat. Not inference speed. The plan and the spec use "agent" and "model" as distinct terms throughout: two agents may share a model, and a comparison that isolates the model requires holding prompt and logic fixed (see [Evaluation Design](#evaluation-design)).
 
-The full protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, and frontend views live in [`arena_spec.md`](arena_spec.md) (v0.4). That spec is the source of truth. This plan is about *how to build it*. Findings and rationale behind the v0.4 changes are in [`review.md`](review.md).
+The full protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, and frontend views live in [`arena_spec.md`](arena_spec.md) (v0.5). That spec is the source of truth. This plan is about *how to build it*. Findings and rationale behind the v0.4 changes are in [`review.md`](review.md).
 
 ## Guiding Principles
 
@@ -40,15 +40,44 @@ The full protocol, action space, damage/stamina values, resolution rules, messag
 
 **On the two agent artifacts:** the *published reference agent* is direct-Anthropic and optimised for being copied by a friend. The *evaluation harness* is LiteLLM/OpenRouter and optimised for running the same scaffold against many models. They share the prompt and the decision loop; only the client differs. Keeping them distinct is deliberate — collapsing them would either bloat the published example's dependencies or restrict evaluation to one vendor. The only credential currently in the working tree is an OpenRouter key, which serves the harness.
 
+## Build Status
+
+_Updated 2026-08-06._
+
+| Phase | State | Gate |
+|---|---|---|
+| 1 — Rules engine | **Built** | **Passed.** Table invariants incl. no-domination; published figures reproduced exactly. |
+| 2 — Match server | **Built** | **Passed.** Full-match integration test with late move, malformed move, disconnect/resume, and server restart. |
+| 3 — Built-in bots | **Built** | **Passed.** All five ladder bots complete matches over the public protocol; logs carry both profiles. |
+| 3.5 — First LLM agent | Blocked | Needs real model runs — **awaiting go-ahead on API spend.** |
+| 4 — Frontend | **Built** | **Passed.** Driven in headless Chrome against a live server: bot-vs-bot match created, filled, started, watched to a KO, replayed from the log, and a forced disconnect showing the paused overlay and recovering. Zero console errors, zero failed requests. |
+| 5 — Reference agent | **Built** | Not evaluated. All four criteria need live models; the agent itself is verified against a real server with a stubbed model. |
+| 6 — Deployment | **Image built** | Not passed. The container is verified locally end to end — healthy in ~8s, non-root, 169 MB, a full bot match through the public API, the browser gate against the image, logs surviving `down`/`up`, graceful SIGTERM. The gate itself needs a real host and a friend on another network. Render blueprint drafted in `render.yaml`, never deployed. |
+
+**Balance figures reproduced** (`python -m server.engine.simulate`), all three as published:
+
+- always-`block_high` vs Jab-bot → 0–0 draw at tick 60, both fighters at 100 HP. The trap holds.
+- hook-every-4th vs Jab-bot → KO at **tick 28**, 65/0 HP, 105/35 points — matching the spec's own `match_end` example exactly.
+- `dodge_right` vs Jab-bot → KO at **tick 20**. Not a dead action; riposte 5 is doing its job.
+
+**Balance check outcome (Phase 3):** always-`jab` is *not* dominant — it finishes 6W/18L, near the bottom of a 15-entrant round-robin — so the stamina/damage tuning trigger does not fire. `frequency` and `cycle-5` top the table, which is the intended shape: the exploiters beat the exploitable.
+
+**Two behaviours worth knowing about, neither a defect:**
+
+- The renderer paces the fight by *animation*, not by tick arrival. Bots resolve a tick in milliseconds, so the arena routinely shows "+19 queued" early in a bot-vs-bot match and finishes the animation seconds after the match itself has ended. This is the clip queue working as designed (spec §13), and it is why the end banner waits for playback to catch up.
+- A spectator opening a watch link on a match already in progress replays it from tick 1 rather than jumping to live, because the server sends the full tick history on connect and the renderer animates all of it. Fine for a 20-tick bot match; for a 60-tick match a late joiner is a long way behind. If that matters, the fix belongs in the renderer's catch-up policy, not in the server.
+
+One item is **left open deliberately**: pure aggression (always-`hook`) places third at 22W. The plan's trigger for halving trade damage is aggression dominating *once mixed strategies are in play*, and the only mixed strategies in this round-robin are `mixer` and `random`. That reading needs real agents, so trade damage stays at full and this stays open for re-check after Phase 3.5. Riposte remains at 5.
+
 ## Target Layout
 
-Nothing below `docs/` exists yet — this is the intended shape, not a description of the tree.
+Built as described below, with two additions the plan did not anticipate: `server/protocol.py` (message validation and construction, split out so the wire format is testable independently of the state machine) and `agents/common/` (the prompt and decision loop shared by the reference agent and the harness, so that only the model client differs between them).
 
 ```
 adam-arena/
 ├── docs/
 │   ├── plan.md              # this file
-│   ├── arena_spec.md        # protocol + rules source of truth (v0.4)
+│   ├── arena_spec.md        # protocol + rules source of truth (v0.5)
 │   ├── review.md            # documentation review + decision log
 │   └── skeleton.md          # rig joint map + clip-authoring conventions
 ├── server/

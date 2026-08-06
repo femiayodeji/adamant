@@ -1,0 +1,34 @@
+# Render blueprint — DRAFT, never deployed. See docs/deploy.md before using it, and
+# check it against Render's current Blueprint schema.
+#
+# The three settings that are not negotiable are explained in docs/deploy.md:
+# one instance, a persistent disk at /data/logs, and WebSocket-friendly timeouts.
+
+services:
+  - type: web
+    name: adam-arena
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter # free has no persistent disk and spins down; both lose match logs
+    region: oregon
+    healthCheckPath: /api/health
+
+    # The match registry is in-memory and tick loops are asyncio tasks in-process.
+    # A second instance would answer 404 for codes it has never seen.
+    numInstances: 1
+
+    disk:
+      name: arena-logs
+      mountPath: /data/logs
+      sizeGB: 1 # a match log is a few KB; 1 GB holds tens of thousands
+
+    envVars:
+      # PORT is injected by Render and read by the container's CMD — do not set it.
+      - key: ARENA_LOG_DIR
+        value: /data/logs
+      - key: ARENA_LOG_LEVEL
+        value: info
+      # Only needed if the UI is ever served from a different origin than the API.
+      # - key: ARENA_CORS_ORIGINS
+      #   value: https://arena.example.com

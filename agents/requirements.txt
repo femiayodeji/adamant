@@ -1,0 +1,13 @@
+# Published reference agent (agents/reference_agent.py) -- keep this list short.
+# A friend copying the example should need nothing else.
+anthropic>=0.120
+websockets>=15
+
+# Evaluation harness only (agents/harness/). Not needed to run the reference agent.
+litellm>=1.95          # one client for every provider, via OpenRouter
+python-dotenv>=1.0     # reads OPENROUTER_API_KEY from .env (gitignored)
+httpx>=0.28            # REST calls to the platform (create/start/fill_bot/log)
+
+# Tests
+pytest>=8
+pytest-asyncio>=1.0
