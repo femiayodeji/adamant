@@ -43,7 +43,7 @@ The unit of evaluation is the **agent** (prompt + model + logic as a bundle), no
 
 ## Document hierarchy
 
-- **`docs/agent_guide.md` — the front door for agent builders.** The 5-minute path, the rules explained rather than specified, the protocol with real captured payloads, writing an agent in any language, and testing free against the bot ladder. Point friends here; point *implementers* at the spec. It explains and links — it never restates a number that could drift.
+- **`docs/agent_guide.md` — the front door for agent builders.** The 5-minute path, the rules explained rather than specified, the protocol with real captured payloads, writing an agent in any language, and testing free against the bot ladder. Point friends here; point *implementers* at the spec. It explains and links — it never restates a number that could drift. **`#/build` in the app is the hosted short version** of it (`frontend/src/components/Build.tsx`) for someone without the repo — same two starter clients, action table fetched from `/api/rules`. Change one and check the other.
 - **`docs/arena_spec.md` (v0.6) — the contract.** Protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, frontend views. Friends will build agents against this spec, not against the code. If implementation must deviate, **update the spec in the same commit.** §13 is the live list of settled-vs-open tuning decisions — read it before re-litigating one.
 - **`docs/plan.md` (v4)** — what is *not* finished: the three open gates, and the evaluation conventions that make results comparable. Completed build instructions have been removed; the code and the spec are the record.
 - **`docs/skeleton.md`** — rig joint map and clip-authoring conventions, including the fourteen-clip roster. Consumed only by the renderer; orthogonal to rules and protocol.
@@ -64,6 +64,10 @@ These are load-bearing across multiple documents; violating one breaks something
 **Rules as data.** The engine is a generic resolver reading a `BOXING` config table. A future combat type = new table + new clips. Do **not** build a combat-type selector or plugin system — import `BOXING` directly.
 
 **Bots use the public protocol.** Built-in bots are asyncio tasks connecting through `/ws/join/{code}` like any external agent. No privileged internal path — baselines and contenders must be measured through identical machinery.
+
+**The rules table is served, not restated.** `GET /api/rules` (spec §8.5) assembles the response from `engine.rules` directly, and the in-app builder page (`frontend/src/components/Build.tsx`) renders its action, economy and no-move numbers from that fetch. Nothing in that page's source contains a damage value or a stamina cost — a docs page that hand-copies the table is wrong one balance change from now, and unlike `demo.ts` (the one duplicate we accept) nobody would notice. `test_rematch.py::test_rules_endpoint_serves_the_engine_table_not_a_copy` asserts the endpoint against the module rather than against literals, for the same reason.
+
+**A rematch is a new match.** `POST /api/matches/{ref}/rematch` (spec §8.4) creates a fresh code and re-spawns the built-in bots into the corners they held; it never rewinds the finished match. One log is one fight — resetting in place would either overwrite a result or give two fights one `match_id`, and both make the evaluation dataset lie. The host's browser has to store the *new* host token before it navigates, or it lands in a lobby it cannot start.
 
 **Two party vocabularies, deliberately.** Agent-facing messages are egocentric (`self` / `opponent`); spectator messages and the log are absolute (`agent_a` / `agent_b`). `match_end` is absolute in both so one parser serves both.
 

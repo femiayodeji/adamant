@@ -84,6 +84,10 @@ class BotClient:
 
         self.corner = reply["corner"]
         self.corner_token = reply.get("corner_token")
+        # Two bots from the same rung ask for the same name and the second is
+        # renamed (spec §6.1). Take the platform's answer, or this bot's own log
+        # lines call it something nobody else in the match does.
+        self.name = reply.get("name", self.name)
         return self.corner
 
     async def run(self) -> None:

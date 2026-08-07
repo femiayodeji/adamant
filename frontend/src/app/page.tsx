@@ -12,16 +12,19 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { DEMO_CODE } from '@/lib/demo';
+import { Build } from '@/components/Build';
 import { Home } from '@/components/Home';
+import { Mark } from '@/components/Mark';
 import { MatchSession } from '@/components/MatchSession';
 
-type Route = { view: 'home' } | { view: 'match'; code: string };
+type Route = { view: 'home' } | { view: 'match'; code: string } | { view: 'build' };
 type Demo = 'match' | 'lobby' | null;
 
 function parseHash(): Route {
   const hash = window.location.hash.replace(/^#\/?/, '');
   const match = /^m\/([^/?#]+)/.exec(hash);
   if (match) return { view: 'match', code: decodeURIComponent(match[1]).toUpperCase() };
+  if (/^build/.test(hash)) return { view: 'build' };
   return { view: 'home' };
 }
 
@@ -57,22 +60,29 @@ export default function Page() {
 
   const code = demo ? DEMO_CODE : route.view === 'match' ? route.code : null;
 
+  if (code) {
+    return (
+      <main className="app">
+        <MatchSession key={code} code={code} demo={demo} onExit={exit} onOpen={open} />
+      </main>
+    );
+  }
+
   return (
     <main className="app">
-      {code ? (
-        <MatchSession key={code} code={code} demo={demo} onExit={exit} />
-      ) : (
-        <>
-          <div className="topbar">
-            <span className="brand">
-              ADAM <b>ARENA</b>
-            </span>
-            <span className="spacer" />
-            <span className="chip">boxing rules · simultaneous ticks</span>
-          </div>
-          <Home onOpen={open} />
-        </>
-      )}
+      <div className="topbar">
+        <span className="brand">
+          <Mark />
+          ADAM <b>ARENA</b>
+        </span>
+        <span className="spacer" />
+        {route.view === 'build' ? (
+          <button onClick={exit}>Back to the arena</button>
+        ) : (
+          <span className="chip">boxing rules · simultaneous ticks</span>
+        )}
+      </div>
+      {route.view === 'build' ? <Build /> : <Home onOpen={open} />}
     </main>
   );
 }

@@ -17,14 +17,17 @@ import { TickSink } from '@/renderer/tickSink';
 import { Arena } from './Arena';
 import { ConnectionChip, CopyButton } from './bits';
 import { Lobby } from './Lobby';
+import { Mark } from './Mark';
 
 interface Props {
   code: string;
   demo: 'match' | 'lobby' | null;
   onExit: () => void;
+  /** Rematch creates a new match and moves this browser to it (spec 8.4). */
+  onOpen: (code: string) => void;
 }
 
-export function MatchSession({ code, demo, onExit }: Props) {
+export function MatchSession({ code, demo, onExit, onOpen }: Props) {
   const sinkRef = useRef<TickSink | null>(null);
   if (!sinkRef.current) sinkRef.current = new TickSink();
   const sink = sinkRef.current;
@@ -49,6 +52,7 @@ export function MatchSession({ code, demo, onExit }: Props) {
     <>
       <div className="topbar">
         <span className="brand">
+          <Mark />
           ADAM <b>ARENA</b>
         </span>
         <span className="chip mono">{code}</span>
@@ -73,6 +77,8 @@ export function MatchSession({ code, demo, onExit }: Props) {
           sink={sink}
           demo={Boolean(demo)}
           demoLog={demoLog}
+          hostToken={hostToken}
+          onOpen={onOpen}
         />
       ) : (
         <Lobby code={code} view={view} hostToken={hostToken} demo={Boolean(demo)} />

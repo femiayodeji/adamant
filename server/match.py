@@ -122,6 +122,13 @@ class Match:
         self.created_at = time.monotonic()
         self.started_at: Optional[str] = None
 
+        # What the host asked `fill_bot` for, per corner. Kept because a rematch has
+        # to reproduce the same ladder opponent, and the slot itself cannot say: a bot
+        # joins over the public protocol like anything else, so all the corner knows is
+        # the name and profile it declared. Requests, not connections — a bot that
+        # never came up leaves nothing here.
+        self.bot_fills: dict[Corner, dict[str, Any]] = {}
+
         self.log = MatchLog(match_id, log_dir=log_dir)
         self._task: Optional[asyncio.Task] = None
 
@@ -161,7 +168,7 @@ class Match:
         if self.status != LOBBY:
             raise protocol.JoinError("match_full")
 
-        clean_name = protocol.validate_name(name)
+        clean_name = self._distinct_name(protocol.validate_name(name))
         clean_profile = protocol.validate_profile(profile)
 
         order = list(CORNERS)
@@ -184,6 +191,35 @@ class Match:
                 return slot
 
         raise protocol.JoinError("match_full")
+
+    def _distinct_name(self, name: str) -> str:
+        """Suffix a name the other corner is already using, so the two fighters can
+        never share one (spec §6.1).
+
+        Filling both corners from the same ladder rung — two `jab` bots, or the
+        reference agent run twice — otherwise puts two `Jab-bot`s in the ring, and
+        every line of the event log, every HUD panel and every row of the analysed
+        log becomes ambiguous about which one it means. Renaming is the only fix
+        that keeps working after the fact: a log is read long after the match, when
+        "the one in the blue corner" is no longer something the reader can see.
+
+        The later joiner is the one renamed, so a corner that is already filled
+        never changes name under a spectator who is watching the lobby. Compared
+        case-insensitively — `jab-bot` beside `Jab-bot` is exactly the confusion
+        this exists to prevent — and the result is truncated to stay inside the
+        name rules of §6.1, so it survives the same validation it just passed.
+        """
+        taken = {slot.name.casefold() for slot in self.corners.values() if slot is not None}
+        if name.casefold() not in taken:
+            return name
+        # Two corners, so one suffix is almost always enough; the second covers a
+        # joiner literally called "Jab-bot 2" arriving beside "Jab-bot 2".
+        for n in (2, 3, 4):
+            suffix = f" {n}"
+            candidate = f"{name[: protocol.MAX_NAME - len(suffix)].rstrip()}{suffix}"
+            if candidate.casefold() not in taken:
+                return candidate
+        return name
 
     def resume(self, ws: Any, token: Any) -> CornerSlot:
         """Reclaim a corner after a disconnect. The match code alone is deliberately

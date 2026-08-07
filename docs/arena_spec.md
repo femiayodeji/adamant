@@ -294,6 +294,10 @@ All messages are JSON with a `type` field.
 
   > The name is rendered to spectators and sent to the opponent as `opponent_name`, where it reaches the opponent's prompt. It is the only free-text channel between adversaries — everything else crossing the boundary is drawn from the closed vocabulary of eight action names and numeric state. Restricting the character set closes a prompt-injection vector that would otherwise let an agent win matches for reasons unrelated to combat. If you later want injection-resistance to be an evaluation axis, relax this deliberately and document it as in-bounds.
 
+  **Names are unique within a match.** If the other corner is already using the name — compared case-insensitively — the *joining* agent's is suffixed: `Jab-bot` beside `Jab-bot` becomes `Jab-bot 2`, truncated if needed to stay inside the 24 characters above. The corner that was already filled never changes name, so a spectator watching the lobby never sees one rename itself.
+
+  > Filling both corners from the same ladder rung — two `jab` bots, or the reference agent run twice — otherwise puts two identically-named fighters in the ring, and every line of the event log, every HUD panel and every row of an analysed log becomes ambiguous about which one it means. Renaming is the only fix that still works after the fact: a log is read long after the match, when "the one in the blue corner" is no longer something the reader can see. **Read your name back from `joined`** rather than assuming you got the one you asked for.
+
 - **`corner`** — **optional.** A request for a specific corner, honoured when that corner is free and silently ignored otherwise; omit it to take whichever corner is free. Always read the corner you actually got from `joined`, never from what you asked for.
 
   > This exists because the lobby's **Add built-in bot** button sits on a specific corner card, and filling `agent_b` while `agent_a` is still empty has to work. It is on the public protocol rather than being a platform-internal mechanism precisely so that built-in bots need no privileged path (§11) — any agent may use it.
@@ -345,9 +349,12 @@ All messages are JSON with a `type` field.
   "type": "joined",
   "corner": "agent_a",
   "match_code": "RUMBLE-4F2",
-  "corner_token": "ct_8f21c0a4"
+  "corner_token": "ct_8f21c0a4",
+  "name": "FemiBot-v1"
 }
 ```
+
+`name` is the name the platform gave this corner — the one that was asked for, unless the other corner already had it (§6.1). It is what spectators, the opponent and the log will call you, so log *this* rather than what you sent.
 
 **Keep `corner_token`.** It is the only way to reclaim this corner after a dropped connection; the match code alone is insufficient, since anyone holding the share link could otherwise seize a corner mid-match.
 
@@ -534,8 +541,10 @@ Renderers therefore cannot read `moves` alone. A `null` has no clip. A voided ac
 | `POST /api/matches` | Creates a match. Optional body `{"max_ticks": 60, "deadline_ms": 5000}`. Returns `{match_id, match_code, host_token, watch_url, config}` |
 | `POST /api/matches/{ref}/start` | Host starts the fight. Rejected unless both corners are filled. |
 | `POST /api/matches/{ref}/fill_bot` | Body: `{corner, bot: "jab" \| "random" \| "cycle" \| "frequency" \| "mixer", seed?: int, period?: 3 \| 5}`. Spawns a built-in bot (§11) as an internal client in that corner. `period` applies to `cycle` only (default 3); supplying it for any other bot, or with a value other than 3 or 5, is a `422`. |
+| `POST /api/matches/{ref}/rematch` | Host runs it back. Creates a **new** match with the same config and re-fills any built-in bots into the corners they held. Returns `{match_id, match_code, host_token, watch_url, config, rematch_of, bots}`. Rejected with `409` unless the source match is `finished` or `abandoned`. |
 | `GET /api/matches/{ref}` | Status: `lobby \| in_progress \| paused \| finished \| abandoned` + corners (with profiles) + result if finished |
 | `GET /api/matches/{ref}/log` | Full match log JSON (used for replay) |
+| `GET /api/rules` | The rules table as data (§8.5). No authentication — it is public reference for agent builders. |
 
 ### 8.1 Match references
 
@@ -547,7 +556,7 @@ This matters: spectators arrive holding only a match code from a share link, whi
 
 ### 8.2 Host authentication
 
-Host-only actions (`start`, `fill_bot`) require the header:
+Host-only actions (`start`, `fill_bot`, `rematch`) require the header:
 
 ```
 X-Host-Token: <host_token>
@@ -572,17 +581,49 @@ Defaults: `max_ticks: 60`, `deadline_ms: 5000`, `resume_window_ms: 120000`. Acce
 
 `deadline_ms` being configurable is what keeps the platform honest about what it measures — see §12.
 
+### 8.4 Rematch
+
+A rematch is a **new match with a new code**, not a reset of the old one. One log is one fight: rewinding a finished match in place would either overwrite a result or leave two fights sharing a `match_id`, and either makes the evaluation dataset lie. Two rematches are therefore two comparable logs fought under identical config.
+
+Built-in bots are re-spawned into the corners they held, with the same `bot`, `seed` and `period`, so a ladder run is one click. An externally-run agent must dial the new code — the response carries it, and the host's browser moves straight into the new lobby. A bot that fails to come back leaves its corner open rather than failing the whole call.
+
+### 8.5 Rules as data
+
+`GET /api/rules` serves the `BOXING` table (§2, §3, §4.4, §4.6) assembled from the same module the resolver reads, plus the configuration defaults of §8.3 and the ladder of §11:
+
+```json
+{
+  "combat_type": "boxing",
+  "actions": ["jab", "cross", "hook", "block_high", "block_low", "dodge_left", "dodge_right", "idle"],
+  "attacks": {"jab": {"damage": 5, "stamina": 5}, "…": {}},
+  "defenses": {"block_high": {"stamina": 3, "counters": ["jab", "cross"], "riposte": 0}, "…": {}},
+  "idle": "idle",
+  "economy": {"start_hp": 100, "start_stamina": 100, "stamina_cap": 100, "passive_regen": 5, "idle_regen_bonus": 15},
+  "repeat_cap": 3,
+  "no_move": {"penalty": 15, "causes": ["timeout", "malformed", "invalid_action", "wrong_tick", "duplicate"]},
+  "defaults": {"max_ticks": 60, "deadline_ms": 5000, "resume_window_ms": 120000, "max_ticks_range": [1, 200], "deadline_ms_range": [500, 120000]},
+  "bots": ["cycle", "frequency", "jab", "mixer", "random"]
+}
+```
+
+It exists so nothing outside this repo has to hand-copy a damage number. The in-app agent-builder page (§9) renders its action table from this response rather than restating it, and an agent that reads its costs from here survives a balance change instead of silently playing the old game.
+
 ---
 
 ## 9. Frontend (single-page app)
 
-Three views, one page. Simple, clean, effective — no navigation maze.
+Four views, one page. Simple, clean, effective — no navigation maze.
 
-1. **Home:** one primary button — **Create Match** — plus a "Watch a match" code input.
+1. **Home:** one primary button — **Create Match** — plus a "Watch a match" code input and a link to **Build an agent**.
 2. **Lobby** (after create): the match code displayed large with a copy button and the join command shown ready to paste (`python agent.py --code RUMBLE-4F2 --url wss://…`); two corner cards that flip from *Waiting…* to the agent's name **and profile** (model, prompt version) on connect; **Add built-in bot** button on each empty corner; **Start Fight** enabled only when both corners are filled. Share link for spectators.
-3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, tick counter, and each fighter's **repeat streak** (§4.6) so a watcher can see the cap coming and read a void when it lands; a **sound** toggle on the canvas; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason; the **event log**; and **Replay** with a transport and a video export.
+3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, tick counter, and each fighter's **repeat streak** (§4.6) so a watcher can see the cap coming and read a void when it lands; a **sound** toggle on the canvas; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason, **Replay**, and **Rematch** for the host (§8.4); the **event log** beside the canvas; and a replay transport with a video export.
+4. **Build an agent** (`#/build`): the protocol, the action table, and copy-paste starters, for someone writing a client against §6 without the repo in front of them. Reached from Home. Its action, economy and no-move numbers are rendered from `GET /api/rules` (§8.5), never restated.
 
 **Event log.** Every event of the whole fight, in fight order, in a box that scrolls. Nothing is dropped and nothing is windowed out — the log is the readable record of the match, and a reviewer stepping through a replay has to be able to read back through it. It follows the fight automatically only while the reader is already at the end, so scrolling up to re-read an exchange is never yanked away by the next tick.
+
+It sits **beside the canvas** on a wide screen and below it on a narrow one. Side by side is what makes the log and the fight one instrument rather than two: a reviewer scrubbing the replay watches the marked line move down the log without the page scrolling, and the fight is never pushed off-screen by the record of what happened in it. Beside the canvas the log is bounded twice — by the height of the canvas column and by the height of the window — and scrolls inside whichever is smaller, so it can never run off the bottom of the screen.
+
+**Headroom for the HUD.** The HUD floats over the canvas as DOM, so the renderer must be told it is there: the camera frames the fighters *plus* a reserved band across the top, rather than framing them to the full viewport and letting the gauges sit on their heads. It is a fraction of the picture, not a pixel offset, so it holds at every stage size and aspect ratio.
 
 **Replay.** Fetches the stored log (§8) and pushes the same `tick_result` objects through the same renderer — no second implementation. On top of that it exposes a transport:
 

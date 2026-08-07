@@ -19,9 +19,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import bots, matchlog, protocol
+from .engine import rules
 from .engine.resolver import CORNERS
 from .engine.strategies import LADDER, CycleBot
-from .match import LOBBY, LifecycleError, MatchConfig
+from .match import ABANDONED, FINISHED, LOBBY, LifecycleError, MatchConfig
 from .registry import Registry
 
 
@@ -109,6 +110,54 @@ async def create_match(body: dict[str, Any] = Body(default={})):
         "host_token": match.host_token,
         "watch_url": f"/?watch={match.match_code}",
         "config": config.as_dict(),
+    }
+
+
+@app.get("/api/rules")
+async def get_rules():
+    """The BOXING table, as data (spec §8.5).
+
+    It exists so that nothing outside this repo has to hand-copy a damage number.
+    The in-app agent-builder page renders its action table straight from this
+    response, and an external agent can read its costs from here instead of
+    embedding them — which is the difference between a client that survives a
+    balance change and one that silently plays the old game.
+
+    Assembled from `engine.rules` directly, so it cannot drift from the resolver.
+    """
+    return {
+        "combat_type": "boxing",
+        "actions": list(rules.ACTIONS),
+        "attacks": rules.ATTACKS,
+        "defenses": {
+            name: {
+                "stamina": spec["stamina"],
+                "counters": list(spec["counters"]),
+                "riposte": spec["riposte"],
+            }
+            for name, spec in rules.DEFENSES.items()
+        },
+        "idle": rules.IDLE,
+        "economy": {
+            "start_hp": rules.START_HP,
+            "start_stamina": rules.START_STAMINA,
+            "stamina_cap": rules.STAMINA_CAP,
+            "passive_regen": rules.PASSIVE_REGEN,
+            "idle_regen_bonus": rules.IDLE_REGEN_BONUS,
+        },
+        "repeat_cap": rules.MAX_CONSECUTIVE_REPEATS,
+        "no_move": {
+            "penalty": rules.NO_MOVE_PENALTY,
+            "causes": list(rules.NO_MOVE_CAUSES),
+        },
+        "defaults": {
+            "max_ticks": rules.DEFAULT_MAX_TICKS,
+            "deadline_ms": rules.DEFAULT_DEADLINE_MS,
+            "resume_window_ms": rules.DEFAULT_RESUME_WINDOW_MS,
+            "max_ticks_range": list(rules.MAX_TICKS_RANGE),
+            "deadline_ms_range": list(rules.DEADLINE_MS_RANGE),
+        },
+        "bots": sorted(LADDER),
     }
 
 
@@ -212,7 +261,61 @@ async def fill_bot(
     taken = await bots.spawn(
         url=_ws_base(request), code=match.match_code, bot=bot, seed=seed, corner=corner, **options
     )
+    match.bot_fills[taken] = {"bot": bot, "seed": seed, **options}
     return {"corner": taken, "bot": bot, "seed": seed, **options}
+
+
+@app.post("/api/matches/{ref}/rematch")
+async def rematch(
+    ref: str,
+    request: Request,
+    x_host_token: Optional[str] = Header(default=None),
+):
+    """Run it back: a new match with the same config and the same ladder opponents
+    (spec §8.4).
+
+    Deliberately a *new* match rather than a reset of the old one. The log is the
+    record and one log is one fight — rewinding a finished match in place would
+    either overwrite a result or leave two fights sharing an id, and both make the
+    evaluation dataset lie. So the host gets a fresh code, and the pair fight again
+    under the same conditions with two comparable logs.
+
+    Built-in bots are re-spawned into the corners they held. A human-run agent has
+    to dial the new code, which is why the response carries it and the frontend
+    walks the host straight into the new lobby.
+    """
+    source = _require_match(ref)
+    _require_host(source, x_host_token)
+    if source.status not in (FINISHED, ABANDONED):
+        raise HTTPException(status_code=409, detail=f"match is {source.status}")
+
+    # A copy, not the same object: two matches sharing one mutable config is a
+    # footgun waiting for the first setting that can be changed after creation.
+    match = registry.create(MatchConfig(**source.config.as_dict()))
+
+    refilled: list[dict[str, Any]] = []
+    for corner, fill in source.bot_fills.items():
+        try:
+            taken = await bots.spawn(
+                url=_ws_base(request), code=match.match_code, corner=corner, **fill
+            )
+        except Exception:
+            # One bot failing to come back must not cost the host the new match —
+            # the corner is simply left open and can be refilled from the lobby.
+            logger.exception("rematch could not refill %s with %s", corner, fill.get("bot"))
+            continue
+        match.bot_fills[taken] = fill
+        refilled.append({"corner": taken, **fill})
+
+    return {
+        "match_id": match.match_id,
+        "match_code": match.match_code,
+        "host_token": match.host_token,
+        "watch_url": f"/?watch={match.match_code}",
+        "config": match.config.as_dict(),
+        "rematch_of": source.match_code,
+        "bots": refilled,
+    }
 
 
 # ─── Agent WebSocket (spec §6) ───
@@ -260,6 +363,11 @@ async def ws_join(websocket: WebSocket, code: str):
             "corner": slot.corner,
             "match_code": match.match_code,
             "corner_token": slot.token,
+            # The name the platform actually gave this corner. Usually the one that
+            # was asked for; suffixed when the other corner already had it (spec
+            # §6.1). An agent that logs its own name has to be told, or its record
+            # of the fight disagrees with everyone else's.
+            "name": slot.name,
         }
     )
 

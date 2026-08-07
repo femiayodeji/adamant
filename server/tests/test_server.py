@@ -9,6 +9,8 @@ import asyncio
 
 import pytest
 
+from server import protocol
+
 from .conftest import Agent, Spectator, seated_match
 
 FAST = {"deadline_ms": 500, "max_ticks": 4}
@@ -172,6 +174,58 @@ async def test_names_outside_the_character_set_are_refused(arena, name):
     created = await arena.create_match()
     agent = await Agent.connect(arena, created["match_code"])
     assert await agent.join(name) == {"type": "error", "reason": "invalid_name"}
+
+
+async def test_the_second_corner_cannot_take_the_first_corners_name(arena):
+    """Two `Jab-bot`s in one ring makes every line of the event log ambiguous, and a
+    log is read long after the fight, when "the blue one" is not something the reader
+    can still see. The later joiner is the one renamed (spec §6.1)."""
+    created = await arena.create_match()
+    a = await Agent.connect(arena, created["match_code"])
+    b = await Agent.connect(arena, created["match_code"])
+
+    assert (await a.join("Jab-bot"))["name"] == "Jab-bot"
+    joined_b = await b.join("jab-bot")  # case is not enough to tell two fighters apart
+    assert joined_b["name"] == "jab-bot 2"
+
+    # And it is the renamed one that everybody else sees, not the requested one.
+    status = (await arena.get(f"/api/matches/{created['match_code']}")).json()
+    assert status["corners"]["agent_b"]["name"] == "jab-bot 2"
+
+    await a.close()
+    await b.close()
+
+
+async def test_a_renamed_corner_still_satisfies_the_name_rules(arena):
+    """The suffix must not push the name past the limit §6.1 just validated it
+    against — a 24-character name plus " 2" would otherwise be illegal."""
+    created = await arena.create_match()
+    longest = "x" * protocol.MAX_NAME
+    a = await Agent.connect(arena, created["match_code"])
+    b = await Agent.connect(arena, created["match_code"])
+
+    await a.join(longest)
+    renamed = (await b.join(longest))["name"]
+
+    assert renamed != longest
+    assert protocol.NAME_PATTERN.match(renamed)
+    assert renamed.endswith(" 2")
+
+    await a.close()
+    await b.close()
+
+
+async def test_a_free_corner_is_not_a_name_clash(arena):
+    """Renaming keys on who is in the ring now, not on who has ever been in it."""
+    created = await arena.create_match()
+    a = await Agent.connect(arena, created["match_code"])
+    await a.join("Alpha")
+    await a.close()
+    await asyncio.sleep(0.2)
+
+    b = await Agent.connect(arena, created["match_code"])
+    assert (await b.join("Alpha"))["name"] == "Alpha"
+    await b.close()
 
 
 async def test_leaving_the_lobby_frees_the_corner(arena):

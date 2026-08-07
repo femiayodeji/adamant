@@ -193,6 +193,42 @@ export interface CreateMatchResponse {
   watch_url?: string;
 }
 
+/** POST /api/matches/{ref}/rematch (spec 8.4) — a *new* match, so the host gets a
+ *  new code and a new token and the fought match keeps its log. */
+export interface RematchResponse extends CreateMatchResponse {
+  config: MatchConfig;
+  rematch_of: string;
+  bots: { corner: Corner; bot: string; seed?: number | null; period?: number }[];
+}
+
+/** GET /api/rules (spec 8.5) — the BOXING table, served from the same module the
+ *  resolver reads. The agent-builder page renders from this rather than restating
+ *  numbers that would drift the first time the table is retuned. */
+export interface Rules {
+  combat_type: string;
+  actions: string[];
+  attacks: Record<string, { damage: number; stamina: number }>;
+  defenses: Record<string, { stamina: number; counters: string[]; riposte: number }>;
+  idle: string;
+  economy: {
+    start_hp: number;
+    start_stamina: number;
+    stamina_cap: number;
+    passive_regen: number;
+    idle_regen_bonus: number;
+  };
+  repeat_cap: number;
+  no_move: { penalty: number; causes: string[] };
+  defaults: {
+    max_ticks: number;
+    deadline_ms: number;
+    resume_window_ms: number;
+    max_ticks_range: [number, number];
+    deadline_ms_range: [number, number];
+  };
+  bots: string[];
+}
+
 export type MatchStatus = 'lobby' | 'in_progress' | 'paused' | 'finished' | 'abandoned';
 
 /** Shape of GET /api/matches/{ref} — field names beyond `status` are not pinned

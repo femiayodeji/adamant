@@ -41,6 +41,28 @@ const STEEL = 0x0a0e13;
  *  a jab puts the fist 0.67 m in front of the model origin, and a torso is ~0.15 m
  *  deep, so 0.42 is the separation at which a straight punch arrives on the chin. */
 const HALF_GAP = 0.42;
+
+/**
+ * Framing.
+ *
+ * `SUBJECT_*` is the box that must always be on screen: both fighters, head to
+ * feet, plus the deck under them. `HUD_HEADROOM` is the band across the top that
+ * the HUD panels float over — the HUD is DOM on top of the canvas, so as far as
+ * three.js is concerned that part of the picture does not exist, and framing the
+ * subject box to the full viewport parks the fighters' heads underneath the HP and
+ * stamina gauges. Reserving it here fixes that at every stage size and aspect
+ * ratio, which a hand-tuned camera position would not.
+ *
+ * The reserved band is added to the top of the box, so the framing centre — and
+ * therefore `lookAt` — rises by half of what was added.
+ */
+const SUBJECT_HEIGHT = 2.2;
+const SUBJECT_WIDTH = 2.5;
+const SUBJECT_CENTRE_Y = 1.02;
+const HUD_HEADROOM = 0.17;
+const FRAMED_HEIGHT = SUBJECT_HEIGHT / (1 - HUD_HEADROOM);
+const FRAMED_CENTRE_Y = SUBJECT_CENTRE_Y + (FRAMED_HEIGHT - SUBJECT_HEIGHT) / 2;
+
 const MIN_TICK_SECONDS = 0.45;
 const MAX_TIME_SCALE = 2.4;
 /** Backlog past which reaction clips are dropped to catch up (KO is never dropped). */
@@ -56,7 +78,7 @@ export class ArenaRenderer {
   private readonly shake = new Shake();
   private readonly sound = new Sound();
   private readonly cameraHome = new THREE.Vector3();
-  private readonly lookAt = new THREE.Vector3(0, 1.02, 0);
+  private readonly lookAt = new THREE.Vector3(0, FRAMED_CENTRE_Y, 0);
 
   private queue: TickResult[] = [];
   private currentTick: TickResult | null = null;
@@ -563,16 +585,19 @@ export class ArenaRenderer {
     const aspect = width / Math.max(height, 1);
     this.camera.aspect = aspect;
 
-    // Frame a fixed box around the two fighters, whatever the viewport shape —
-    // a watch link opened on a phone in portrait must still show both corners.
+    // Frame a fixed box around the two fighters — plus the HUD's band at the top —
+    // whatever the viewport shape: a watch link opened on a phone in portrait must
+    // still show both corners.
     const vFov = (this.camera.fov * Math.PI) / 180;
-    const needHeight = 2.2 / 2 / Math.tan(vFov / 2);
-    const needWidth = 2.5 / 2 / Math.tan(vFov / 2) / Math.max(aspect, 0.35);
+    const needHeight = FRAMED_HEIGHT / 2 / Math.tan(vFov / 2);
+    const needWidth = SUBJECT_WIDTH / 2 / Math.tan(vFov / 2) / Math.max(aspect, 0.35);
     const distance = Math.max(needHeight, needWidth) * 1.04;
 
     // The framed position is the home the shake displaces from; `step` writes the
-    // camera every frame, so nothing here may set position directly.
-    this.cameraHome.set(0, 1.35, distance);
+    // camera every frame, so nothing here may set position directly. Level with the
+    // framing centre: tilting down from above it would undo the headroom by pushing
+    // the heads back up the picture.
+    this.cameraHome.set(0, FRAMED_CENTRE_Y, distance);
     this.camera.position.copy(this.cameraHome).add(this.shake.offset);
     this.camera.lookAt(this.lookAt);
     this.camera.updateProjectionMatrix();

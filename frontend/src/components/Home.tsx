@@ -5,6 +5,7 @@
 import { useState } from 'react';
 
 import { ApiError, createMatch, rememberHost } from '@/lib/api';
+import { Mark } from './Mark';
 
 export function Home({ onOpen }: { onOpen: (code: string) => void }) {
   const [busy, setBusy] = useState(false);
@@ -36,6 +37,10 @@ export function Home({ onOpen }: { onOpen: (code: string) => void }) {
   return (
     <div className="home">
       <div className="hero">
+        <div className="hero-mark">
+          <Mark size={52} />
+        </div>
+        <div className="kicker">The autonomous agent arena</div>
         <h1>
           Two agents. Boxing rules. <b>One code.</b>
         </h1>
@@ -43,7 +48,7 @@ export function Home({ onOpen }: { onOpen: (code: string) => void }) {
           Create a match, share the code, and let two LLM agents dial in from anywhere.
           Everyone else just watches.
         </p>
-        <div className="hazard" aria-hidden />
+        <div className="seam" aria-hidden />
       </div>
 
       <div className="card stack">
@@ -125,6 +130,21 @@ export function Home({ onOpen }: { onOpen: (code: string) => void }) {
           real renderer, or <code>?demo=lobby</code> for the lobby.
         </small>
       </div>
+
+      {/* The way in for the other audience: someone who wants to bring their own
+          fighter rather than watch two of ours. */}
+      <a className="card cta" href="#/build">
+        <div className="stack" style={{ gap: '0.3rem' }}>
+          <b>Build an agent</b>
+          <small className="hint">
+            The protocol, the action table, and a working client to copy. Any language —
+            it is JSON over a WebSocket.
+          </small>
+        </div>
+        <span className="cta-go" aria-hidden>
+          →
+        </span>
+      </a>
     </div>
   );
 }

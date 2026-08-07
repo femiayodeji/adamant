@@ -7,6 +7,8 @@ import type {
   CreateMatchResponse,
   MatchLog,
   MatchStatusResponse,
+  RematchResponse,
+  Rules,
 } from './types';
 
 export class ApiError extends Error {
@@ -81,6 +83,20 @@ export function fillBot(
     headers: { 'X-Host-Token': hostToken },
     body: JSON.stringify(body),
   });
+}
+
+/** Run it back (spec 8.4). A *new* match: the caller must remember the new host
+ *  token and move to the new code — the old one keeps its result and its log. */
+export function rematch(ref: string, hostToken: string): Promise<RematchResponse> {
+  return request<RematchResponse>(`/api/matches/${encodeURIComponent(ref)}/rematch`, {
+    method: 'POST',
+    headers: { 'X-Host-Token': hostToken },
+  });
+}
+
+/** The rules table (spec 8.5). Public — no match and no token needed. */
+export function getRules(): Promise<Rules> {
+  return request<Rules>('/api/rules');
 }
 
 export function startMatch(ref: string, hostToken: string): Promise<unknown> {

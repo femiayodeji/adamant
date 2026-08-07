@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ApiError, getLog } from '@/lib/api';
+import { ApiError, getLog, rematch, rememberHost } from '@/lib/api';
 import {
   CORNERS,
   MAX_CONSECUTIVE_REPEATS,
@@ -79,6 +79,10 @@ interface ArenaProps {
   sink: TickSink;
   demo: boolean;
   demoLog: () => MatchLog | null;
+  /** Present only in the browser that created this match — Rematch is host-only,
+   *  for the same reason Start is (spec 8.2). */
+  hostToken: string | null;
+  onOpen: (code: string) => void;
 }
 
 interface Transport {
@@ -89,7 +93,15 @@ interface Transport {
   total: number;
 }
 
-export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
+export function Arena({
+  code,
+  view,
+  sink,
+  demo,
+  demoLog,
+  hostToken,
+  onOpen,
+}: ArenaProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ArenaRenderer | null>(null);
 
@@ -112,6 +124,7 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
   const [recording, setRecording] = useState<'running' | null>(null);
   const [videoNote, setVideoNote] = useState<string | null>(null);
   const [drained, setDrained] = useState(false);
+  const [rematching, setRematching] = useState(false);
   /** Starts false on every render path, including the prerendered one — reading
    *  the stored preference here instead would make the server's HTML and the
    *  client's first render disagree. It is restored in an effect below. */
@@ -293,6 +306,32 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
     renderer?.reset();
     setHud(null);
   }, []);
+
+  /* ------------------------------------------------------------- rematch */
+
+  /** Run it back. The server makes a *new* match (spec 8.4) — a new code, a new
+   *  host token, the same config, and the same built-in bots back in their corners
+   *  — so this browser has to store the new token before it navigates, or it would
+   *  land in a lobby it cannot start. Externally-run agents dial the new code, which
+   *  is why the destination is the lobby and not the arena. */
+  const runItBack = useCallback(async () => {
+    if (!code || !hostToken) return;
+    setRematching(true);
+    setReplayError(null);
+    try {
+      const next = await rematch(code, hostToken);
+      rememberHost({
+        match_id: next.match_id,
+        match_code: next.match_code,
+        host_token: next.host_token,
+      });
+      onOpen(next.match_code);
+    } catch (err) {
+      setReplayError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setRematching(false);
+    }
+  }, [code, hostToken, onOpen]);
 
   const seek = useCallback((index: number) => {
     const active = session.current;
@@ -507,130 +546,143 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
   const currentTick = hud?.tick ?? -1;
   const showEnd = view.phase === 'ended' && drained && !replaying && view.end;
   const canReplay = view.phase === 'ended' || demo;
+  /** Host-only, and only once there is a fought match to run back (spec 8.4 rejects
+   *  a rematch of anything unfinished). Independent of the replay transport. */
+  const canRematch = Boolean(hostToken) && !demo && view.phase === 'ended';
 
   return (
-    <div className="stack">
-      <div className="stage">
-        <canvas ref={canvasRef} />
+    /* Canvas and log side by side on a wide screen, stacked on a narrow one. The
+       log is the text record of what is on the canvas; putting it alongside means a
+       reviewer scrubbing the replay watches the marked line move without the page
+       scrolling under them. */
+    <div className="arena-split">
+      <div className="arena-main">
+        <div className="stage">
+          <canvas ref={canvasRef} />
 
-        <div className="hud">
-          <div className="hud-top">
-            <FighterPanel corner="agent_a" name={names.agent_a} state={state.agent_a} />
-            <div className="tickbox">
-              <div className="n mono">
-                {String(hud?.tick ?? 0).padStart(2, '0')}
-                <span className="of">/{maxTicks}</span>
+          <div className="hud">
+            <div className="hud-top">
+              <FighterPanel corner="agent_a" name={names.agent_a} state={state.agent_a} />
+              <div className="tickbox">
+                <div className="n mono">
+                  {String(hud?.tick ?? 0).padStart(2, '0')}
+                  <span className="of">/{maxTicks}</span>
+                </div>
+                <div className="l">tick</div>
               </div>
-              <div className="l">tick</div>
+              <FighterPanel corner="agent_b" name={names.agent_b} state={state.agent_b} />
             </div>
-            <FighterPanel corner="agent_b" name={names.agent_b} state={state.agent_b} />
+
+            <div className="moves">
+              {hud?.moves.agent_a && (
+                <MoveChip corner="agent_a" move={hud.moves.agent_a} events={hud.events} />
+              )}
+              {hud?.moves.agent_b && (
+                <MoveChip corner="agent_b" move={hud.moves.agent_b} events={hud.events} />
+              )}
+              {replaying && !recording && <span className="move mono">replay</span>}
+              {recording && <span className="move mono rec">● recording</span>}
+              {(hud?.backlog ?? 0) > 2 && (
+                <span className="move mono muted">+{hud?.backlog} queued</span>
+              )}
+            </div>
           </div>
 
-          <div className="moves">
-            {hud?.moves.agent_a && (
-              <MoveChip corner="agent_a" move={hud.moves.agent_a} events={hud.events} />
-            )}
-            {hud?.moves.agent_b && (
-              <MoveChip corner="agent_b" move={hud.moves.agent_b} events={hud.events} />
-            )}
-            {replaying && !recording && <span className="move mono">replay</span>}
-            {recording && <span className="move mono rec">● recording</span>}
-            {(hud?.backlog ?? 0) > 2 && (
-              <span className="move mono muted">+{hud?.backlog} queued</span>
-            )}
-          </div>
+          <Callouts hud={hud} />
+
+          {/* Outside `.hud`, which is `pointer-events: none` and is a two-row layout
+              with nowhere to put a third thing. */}
+          <button
+            type="button"
+            className={`sound-toggle${sound ? ' on' : ''}`}
+            onClick={toggleSound}
+            aria-pressed={sound}
+            title={
+              sound
+                ? 'Mute the fight'
+                : 'Sound: punches, blocks, the repeat-cap buzzer and the bell'
+            }
+          >
+            <SpeakerIcon on={sound} />
+            <span className="mono">{sound ? 'sound' : 'muted'}</span>
+          </button>
+
+          {!ready && !loadError && (
+            <div className="overlay">
+              <div className="box">
+                <div className="title">Loading the rig…</div>
+                <small className="hint">xbot.glb, fourteen procedural clips</small>
+              </div>
+            </div>
+          )}
+
+          {loadError && (
+            <div className="overlay">
+              <div className="box">
+                <div className="title">Renderer failed</div>
+                <div className="error">{loadError}</div>
+              </div>
+            </div>
+          )}
+
+          {view.phase === 'paused' && view.paused && <PausedOverlay view={view} />}
+
+          {showEnd && view.end && (
+            <div className="overlay">
+              <div className="box">
+                <div className="title">
+                  {view.end.winner ? `${names[view.end.winner]} wins` : 'Draw'}
+                </div>
+                <div className="row" style={{ justifyContent: 'center' }}>
+                  <span className="chip">by {view.end.reason}</span>
+                  <span className="chip">tick {view.end.final_tick}</span>
+                  <span className="chip">
+                    {score(view.end.final_state.agent_a)} — {score(view.end.final_state.agent_b)}{' '}
+                    decision score
+                  </span>
+                </div>
+                <div className="row" style={{ justifyContent: 'center' }}>
+                  <button className="primary big" onClick={startReplay}>
+                    Replay
+                  </button>
+                  {canRematch && (
+                    <button
+                      className="big"
+                      onClick={runItBack}
+                      disabled={rematching}
+                      title="A new match with the same settings, and the same bots back in their corners"
+                    >
+                      {rematching ? 'Setting up…' : 'Rematch'}
+                    </button>
+                  )}
+                </div>
+                {replayError && <div className="error">{replayError}</div>}
+              </div>
+            </div>
+          )}
         </div>
 
-        <Callouts hud={hud} />
-
-        {/* Outside `.hud`, which is `pointer-events: none` and is a two-row layout
-            with nowhere to put a third thing. */}
-        <button
-          type="button"
-          className={`sound-toggle${sound ? ' on' : ''}`}
-          onClick={toggleSound}
-          aria-pressed={sound}
-          title={
-            sound
-              ? 'Mute the fight'
-              : 'Sound: punches, blocks, the repeat-cap buzzer and the bell'
-          }
-        >
-          <SpeakerIcon on={sound} />
-          <span className="mono">{sound ? 'sound' : 'muted'}</span>
-        </button>
-
-        {!ready && !loadError && (
-          <div className="overlay">
-            <div className="box">
-              <div className="title">Loading the rig…</div>
-              <small className="hint">xbot.glb, fourteen procedural clips</small>
-            </div>
-          </div>
-        )}
-
-        {loadError && (
-          <div className="overlay">
-            <div className="box">
-              <div className="title">Renderer failed</div>
-              <div className="error">{loadError}</div>
-            </div>
-          </div>
-        )}
-
-        {view.phase === 'paused' && view.paused && <PausedOverlay view={view} />}
-
-        {showEnd && view.end && (
-          <div className="overlay">
-            <div className="box">
-              <div className="title">
-                {view.end.winner ? `${names[view.end.winner]} wins` : 'Draw'}
-              </div>
-              <div className="row" style={{ justifyContent: 'center' }}>
-                <span className="chip">by {view.end.reason}</span>
-                <span className="chip">tick {view.end.final_tick}</span>
-                <span className="chip">
-                  {score(view.end.final_state.agent_a)} — {score(view.end.final_state.agent_b)}{' '}
-                  decision score
-                </span>
-              </div>
-              <button className="primary big" onClick={startReplay}>
-                Replay
-              </button>
-              {replayError && <div className="error">{replayError}</div>}
-            </div>
-          </div>
+        {transport && (
+          <ReplayBar
+            transport={transport}
+            recording={recording !== null}
+            canRecord={format !== null}
+            ticks={session.current?.ticks ?? []}
+            onSeek={seek}
+            onSpeed={setSpeed}
+            onToggle={togglePlay}
+            onExit={exitReplay}
+            onDownload={downloadVideo}
+          />
         )}
       </div>
 
-      {transport && (
-        <ReplayBar
-          transport={transport}
-          recording={recording !== null}
-          canRecord={format !== null}
-          ticks={session.current?.ticks ?? []}
-          onSeek={seek}
-          onSpeed={setSpeed}
-          onToggle={togglePlay}
-          onExit={exitReplay}
-          onDownload={downloadVideo}
-        />
-      )}
-
-      <div className="card">
+      <div className="card arena-log">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2>Event log</h2>
-          <div className="row">
-            <span className="chip mono muted">{rows.length} events</span>
-            {canReplay && !replaying && <button onClick={startReplay}>Replay</button>}
-            {canReplay && !replaying && format && (
-              <button onClick={downloadVideo}>Download video</button>
-            )}
-          </div>
+          <span className="chip mono muted">{rows.length} events</span>
         </div>
-        {videoNote && <small className="hint">{videoNote}</small>}
-        {replayError && !showEnd && <div className="error">{replayError}</div>}
-        <div className="ticker" ref={logBox} onScroll={onLogScroll} style={{ marginTop: '0.6rem' }}>
+        <div className="ticker" ref={logBox} onScroll={onLogScroll}>
           {rows.length === 0 && <span className="line">Waiting for the first tick…</span>}
           {rows.map((row, i) => (
             <span
@@ -641,6 +693,36 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
             </span>
           ))}
         </div>
+        {/* Replay and Download own a replay session, so they stand down while one is
+            running. Rematch does not: it is about the *next* fight, and hiding it
+            behind Close meant a host who watched the replay first had no way back to
+            it. It stays put for as long as the match is over. */}
+        {(canRematch || (canReplay && !replaying)) && (
+          <div className="row">
+            {canReplay && !replaying && (
+              <>
+                <button onClick={startReplay}>Replay</button>
+                {format && <button onClick={downloadVideo}>Download video</button>}
+              </>
+            )}
+            {canRematch && (
+              <button
+                className={replaying ? 'primary' : undefined}
+                onClick={runItBack}
+                disabled={rematching || recording !== null}
+                title={
+                  recording
+                    ? 'Finish the recording first — leaving this match would cut it short'
+                    : 'A new match with the same settings, and the same bots back in their corners'
+                }
+              >
+                {rematching ? 'Setting up…' : 'Rematch'}
+              </button>
+            )}
+          </div>
+        )}
+        {videoNote && <small className="hint">{videoNote}</small>}
+        {replayError && !showEnd && <div className="error">{replayError}</div>}
       </div>
     </div>
   );

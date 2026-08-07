@@ -60,7 +60,10 @@ async def _play(uri, name, profile, decide, session, log):
             if kind == "joined":
                 session["corner"] = msg.get("corner")
                 session["corner_token"] = msg.get("corner_token")
-                log(f"joined {msg.get('match_code')} as {session['corner']}")
+                # Not necessarily the name we asked for: names are unique within a
+                # match, so the second corner to want one is renamed (spec 6.1).
+                session["name"] = msg.get("name", name)
+                log(f"joined {msg.get('match_code')} as {session['name']} ({session['corner']})")
 
             elif kind == "error":
                 raise ProtocolError(msg.get("reason", "unknown"))

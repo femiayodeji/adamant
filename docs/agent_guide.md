@@ -14,6 +14,13 @@ explains it. Where a number matters, this page points at the spec section rather
 copying the value, so the two cannot drift apart. **Do not hardcode damage, stamina,
 or timing numbers from this page.**
 
+**There is a shorter version of this page inside the arena itself**, at `#/build` on
+any running host (linked from the landing page). It covers the protocol, the action
+table — rendered live from `GET /api/rules` ([§8.5](arena_spec.md#85-rules-as-data))
+rather than restated — and the same two starter clients as [§6](#6-write-your-own-in-any-language).
+Send that link to somebody who does not have this repo checked out; read this page for
+the worked tick, the economy in detail, and the LLM-specific discipline it leaves out.
+
 Three things are worth reading in full before you write much: the action table
 ([§2](arena_spec.md#2-action-space)), the repetition cap
 ([§4.6](arena_spec.md#46-repetition-cap)), and the agent protocol
@@ -479,10 +486,16 @@ connect  →  join  →  joined  →  match_start  →  ┌ state_update  →  m
 ### `joined` — your corner and your token
 
 ```json
-{"type": "joined", "corner": "agent_a", "match_code": "COMBO-8F3", "corner_token": "ct_919a660bd72a"}
+{"type": "joined", "corner": "agent_a", "match_code": "COMBO-8F3",
+ "corner_token": "ct_919a660bd72a", "name": "DocsBot"}
 ```
 
 **Keep `corner_token`.** See [§4](#4-two-more-rules-that-surprise-people).
+
+**Read `name` back too.** Names are unique within a match: if the other corner got there first with the same one, yours is suffixed — `Jab-bot` beside `Jab-bot` becomes `Jab-bot 2`
+([§6.1](arena_spec.md#61-agent--platform)). That is what spectators, your opponent and
+the log will call you, so print and log this rather than what you sent. It bites the
+moment you fill both corners from the same script.
 
 ### `match_start` — the host started the fight
 

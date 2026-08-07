@@ -15,7 +15,8 @@ from .engine.resolver import Corner, Event, MatchState, to_egocentric
 
 SCHEMA_VERSION = 1
 
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9 _-]{1,24}$")
+MAX_NAME = 24
+NAME_PATTERN = re.compile(rf"^[A-Za-z0-9 _-]{{1,{MAX_NAME}}}$")
 
 
 class JoinError(Exception):
