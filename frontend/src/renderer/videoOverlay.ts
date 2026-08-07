@@ -11,6 +11,7 @@
  * the frame size rather than inherited from CSS.
  */
 
+import { cornerHex } from './corners';
 import {
   MAX_CONSECUTIVE_REPEATS,
   type ArenaEvent,
@@ -19,8 +20,13 @@ import {
   type MatchEnd,
 } from '@/lib/types';
 
-/** Matches CORNER_COLOR in arenaRenderer.ts and `--a` / `--b` in globals.css. */
-const COLOR: Record<Corner, string> = { agent_a: '#29e0ff', agent_b: '#ff5a3c' };
+/** From `corners.ts`, so a recording can never label the corners in different
+ *  colours from the canvas it is recording. */
+const COLOR: Record<Corner, string> = {
+  agent_a: cornerHex('agent_a'),
+  agent_b: cornerHex('agent_b'),
+};
+const ALARM = '#ff3a2f';
 const VOID = '#ffb020';
 const INK = '#e8f2f8';
 const DIM = 'rgba(232, 242, 248, 0.55)';
@@ -196,7 +202,7 @@ function eventLine(event: ArenaEvent, names: Record<Corner, string>): [string, s
         VOID,
       ];
     case 'ko':
-      return [`${names[event.who]} is knocked out`, '#ff5a3c'];
+      return [`${names[event.who]} is knocked out`, ALARM];
     default:
       return ['', INK];
   }

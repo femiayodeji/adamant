@@ -123,5 +123,42 @@
     "_comment": "skeleton.md: a left-side pose mirrors to the right by negating y and z and leaving x alone, with Left*/Right* joints swapped. agent_b is agent_a mirrored across X.",
     "negate": ["y", "z"],
     "swapPrefixes": [["Left", "Right"]]
+  },
+  "hand": {
+    "_comment": [
+      "The fifteen finger bones of a fully closed LEFT fist, as offsets from the",
+      "T-pose rest hand — which is flat and open, and reads as a slap on every",
+      "punch in the library until something closes it.",
+      "",
+      "Fingers are not in 'joints' above and are never named by a keyframe. A pose",
+      "asks for a hand SHAPE instead — '_fist': 1 for a driven fist, 0 for the open",
+      "rest hand, fractions in between — and clipFactory.ts (and tools/rig.py, from",
+      "this same table) scales these rotations by it. Forty-eight finger bones per",
+      "keyframe would bury the pose that matters, and the fingers have no reason to",
+      "move independently: the hand is a fist when it throws and slack when the",
+      "fighter stops fighting.",
+      "",
+      "The right hand is DERIVED by the mirror rule above, so there is one hand to",
+      "tune and no way for the two to disagree. Palms face down in the T-pose, so",
+      "-z curls a finger into the palm; the thumb needs +y as well to come across",
+      "the front of the curled fingers instead of hanging off the side."
+    ],
+    "curl": {
+      "LeftHandThumb1": { "y": 30, "z": -20 },
+      "LeftHandThumb2": { "z": -20 },
+      "LeftHandThumb3": { "z": -20 },
+      "LeftHandIndex1": { "z": -85 },
+      "LeftHandIndex2": { "z": -92 },
+      "LeftHandIndex3": { "z": -62 },
+      "LeftHandMiddle1": { "z": -88 },
+      "LeftHandMiddle2": { "z": -95 },
+      "LeftHandMiddle3": { "z": -65 },
+      "LeftHandRing1": { "z": -88 },
+      "LeftHandRing2": { "z": -95 },
+      "LeftHandRing3": { "z": -65 },
+      "LeftHandPinky1": { "z": -85 },
+      "LeftHandPinky2": { "z": -92 },
+      "LeftHandPinky3": { "z": -60 }
+    }
   }
 }

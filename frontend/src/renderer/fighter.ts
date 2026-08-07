@@ -20,9 +20,18 @@ import { STANCE_CLIP } from './clipTypes';
 
 const FADE = 0.07;
 
-/** Resting emissive tint. Low on purpose: it identifies the corner without
- *  repainting the model. The rig's own colours are what the viewer should read. */
-const BASE_EMISSIVE = 0.075;
+/** Resting emissive tint. Low on purpose — the corner colour is on the albedo now,
+ *  and this is a rim of it, not a second coat. It is also the channel `pulse` drives. */
+const BASE_EMISSIVE = 0.06;
+
+/** How dark the corner colour goes on the body. Full saturation under the key
+ *  light clips to a flat plate and takes the shading of the torso with it. */
+const BODY_TINT = 0.55;
+
+/** The dark end the joint material is mixed toward: near-black, so knees, elbows
+ *  and shoulders read as articulation instead of as more torso. */
+const JOINT_DARK = 0x05070a;
+const JOINT_MIX = 0.82;
 
 /** Flash decay, in units of `flash` per second. ~0.3 s from a full hit back to rest. */
 const FLASH_DECAY = 3.4;
@@ -82,25 +91,40 @@ export class Fighter {
   }
 
   /**
-   * Adopt this corner's colour WITHOUT repainting the model.
+   * Put this corner's colours on the fighter — red corner, blue corner.
    *
-   * The rig in `xbot.glb` carries its own materials, and they are what a viewer
-   * should recognise on the canvas — so base colour, map, metalness and roughness
-   * are all left exactly as the file authored them. Corner identity is carried by
-   * three things that do not touch the albedo: the per-corner rim light in
-   * `ArenaRenderer.buildStage`, the deck band and post cap under each fighter, and
-   * the low emissive tint set here.
+   * Both fighters are the same rig loaded twice, and `xbot.glb` dresses it in one
+   * salmon body and no textures at all, so out of the file the two corners are
+   * literally the same colour. Rim lights and a deck band underneath are not
+   * enough to fix that once the fighters are close together and moving: at the
+   * moment a punch lands, which is the moment that has to be readable, the two
+   * silhouettes overlap and a rim is exactly what is occluded.
    *
-   * The materials are still CLONED per corner, because the emissive is also the
-   * channel `pulse` drives — two corners sharing one material would flash together.
+   * So the corner colour goes on the albedo. The rig carries two materials and
+   * they are treated differently on purpose — the body takes the corner colour
+   * darkened (full saturation clips flat under the key light), and the joint
+   * material is mixed almost to black so knees, elbows and shoulders stay
+   * legible as articulation. Nothing here needs a texture, because the file
+   * has none to preserve.
+   *
+   * The materials are CLONED per corner, because the emissive is also the channel
+   * `pulse` drives — two corners sharing one material would flash together.
    */
   skin(color: number): void {
     this.tone.set(color);
+    const body = new THREE.Color(color).multiplyScalar(BODY_TINT);
+    const joint = new THREE.Color(color).lerp(new THREE.Color(JOINT_DARK), JOINT_MIX);
+
     this.group.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
       const source = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       const material = (source as THREE.MeshStandardMaterial).clone();
+      // xbot.glb names them `Beta_Joints_MAT` and `…Beta_HighLimbsGeoSG2`.
+      const isJoint = /joint/i.test(material.name);
+      material.color.copy(isJoint ? joint : body);
+      material.metalness = isJoint ? 0.62 : 0.1;
+      material.roughness = isJoint ? 0.38 : 0.62;
       material.emissive = this.tone.clone();
       material.emissiveIntensity = BASE_EMISSIVE;
       material.needsUpdate = true;

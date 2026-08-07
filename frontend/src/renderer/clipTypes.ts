@@ -15,9 +15,26 @@ export interface Pose {
   _rootRot?: AxisRot;
 }
 
+/** How closed a hand is: 0 = the rig's open rest hand, 1 = the authored fist. */
+export type Curl = number | { left?: number; right?: number };
+
+/**
+ * A pose as it is written in clips.json, before `_fist` becomes finger rotations.
+ *
+ * The distinction is only about typing: `_fist` is the one key whose value is not
+ * an AxisRot, so it is expanded away by `expandFist` at load time and every other
+ * consumer sees a plain `Pose`.
+ */
+export interface AuthoredPose {
+  [joint: string]: AxisRot | Curl | undefined;
+  _root?: AxisRot;
+  _rootRot?: AxisRot;
+  _fist?: Curl;
+}
+
 export interface ClipKey {
   f: number;
-  pose: Pose;
+  pose: AuthoredPose;
 }
 
 export interface ClipDef {
@@ -32,7 +49,7 @@ export interface ClipDef {
 
 export interface ClipLibrary {
   fps: number;
-  stance: Pose;
+  stance: AuthoredPose;
   clips: Record<string, ClipDef>;
 }
 
@@ -45,6 +62,8 @@ export interface JointSpec {
 export interface SkeletonMap {
   joints: Record<string, JointSpec>;
   mirror: { negate: string[]; swapPrefixes: [string, string][] };
+  /** The left hand's fully closed fist; the right is derived by `mirror`. */
+  hand: { curl: Record<string, AxisRot> };
 }
 
 /** The name of every clip the renderer can play. */

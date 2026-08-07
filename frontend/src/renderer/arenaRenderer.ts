@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
+import { CORNER_COLOR, cornerHex } from './corners';
 import { Fighter } from './fighter';
 import { Shake, Sparks } from './fx';
 import { CORNERS, type ArenaEvent, type Corner, type TickResult } from '@/lib/types';
@@ -30,14 +31,6 @@ export interface RendererOptions {
   modelUrl?: string;
   onHud?: (snapshot: HudSnapshot) => void;
 }
-
-/** Corner identity, shared with globals.css (`--a` / `--b`). Cyan diagnostic vs.
- *  hazard red — legible side by side and distinguishable at phone size. Colour is
- *  never the only cue: the HUD labels every corner and the sides never swap. */
-const CORNER_COLOR: Record<Corner, number> = {
-  agent_a: 0x29e0ff,
-  agent_b: 0xff5a3c,
-};
 
 /** Warning amber. The repeat cap's colour everywhere: clip flash, spark, HUD pip. */
 const VOID_COLOR = 0xffb020;
@@ -575,8 +568,8 @@ function deckTexture(): THREE.Texture {
   // The two corner bands. The texture's X axis runs along the fighters' axis, so
   // the left band sits under agent_a and the right one under agent_b.
   const bands: [number, string][] = [
-    [0, '#29e0ff'],
-    [size - size * 0.11, '#ff5a3c'],
+    [0, cornerHex('agent_a')],
+    [size - size * 0.11, cornerHex('agent_b')],
   ];
   for (const [x, color] of bands) {
     ctx.fillStyle = color;

@@ -6,9 +6,9 @@ The joint map for the **Mixamo Xbot** rig (`statics/models/xbot.glb`), plus the 
 
 **How to read the map:** all rotations are **offsets from the T-pose rest position, in degrees**. `0` on every axis is the rest pose. `range` is the usable envelope for each axis; going outside it produces visible mesh deformation. The `note` on each joint describes what its axes do in plain English, which is what makes the map usable directly in an LLM prompt for pose generation.
 
-Every bone's rest rotation in `xbot.glb` is identity, so all bones share the model's axis frame — verified by `frontend/tools/pose_check.py`, which validates the clip library as data (joint names, axis ranges, stance anchoring, loop seams, FK sanity, and the skinned mesh against the floor) without a browser. `frontend/src/renderer/skeleton-map.json` is the machine-readable copy this file describes; keep the two in sync.
+Every bone's rest rotation in `xbot.glb` is identity, so all bones share the model's axis frame — verified by `frontend/tools/pose_check.py`, which validates the clip library as data (joint names, axis ranges, stance anchoring, loop seams, FK sanity, and the skinned mesh against the floor) without a browser. Its sibling `pose_render.py` *draws* the library — CPU-skinned PNG contact sheets, one tile per sampled frame — because a clip can be entirely legal and still look wrong, and the alternative was building the frontend and watching a match go past at speed. Both sit on `tools/rig.py`, which is the one Python implementation of the renderer's maths. `frontend/src/renderer/skeleton-map.json` is the machine-readable copy this file describes; keep the two in sync.
 
-**The rig renders in its own materials.** `xbot.glb` carries them — two `MeshStandard` materials, no textures — and the renderer leaves base colour, metalness and roughness exactly as authored. Corner identity is carried by things that do not touch the model's albedo: a per-corner rim light, the deck band and post cap under each fighter, a low emissive tint, and the HUD. That emissive is also the channel the hit flash drives, which is why the materials are still cloned per corner even though nothing else about them differs.
+**The fighters wear their corner colour.** `xbot.glb` carries two `MeshStandard` materials and no textures, so both corners come out of the file identically salmon. `Fighter.skin()` puts the corner colour on the albedo — the body tinted and darkened, the joint material mixed almost to black so knees, elbows and shoulders read as articulation — and keeps a low emissive tint of the same colour, which is also the channel the hit flash drives. The rim lights, deck band, post cap and HUD carry the colour too, but they cannot carry it alone: at the moment a punch lands, which is the moment that has to be readable, the two silhouettes overlap and a rim light is exactly what is occluded.
 
 ---
 
@@ -136,6 +136,14 @@ SKELETON_MAP = {
 
 The map is internally mirror-consistent: `LeftForeArm.y` `[-145, 0]` against `RightForeArm.y` `[0, 145]`, the shoulder `z` signs, and the thigh spread signs all invert correctly. A left-side pose can be mirrored to the right by negating `y` and `z` and leaving `x` alone.
 
+### The fingers are not in the map, on purpose
+
+The rig has all thirty finger bones and its rest hand is **flat and open**, which means a punch that never touches them lands as an open-palm slap. But no keyframe should ever name `LeftHandRing2`: forty-eight finger rotations per pose would bury the pose that matters, and the fingers have no reason to move independently — the hand is a fist when it throws and slack when the fighter stops fighting.
+
+So a pose asks for a hand *shape* instead. `"_fist": 1` is the closed fist, `0` is the rig's own open rest hand, `{"left": 1}` drives one hand alone, and anything between is a hand on its way to one or the other (the guard sits at `0.85`, `idle` opens to `0.3`, `ko` goes slack at `0.1`). `skeleton-map.json`'s `hand.curl` section holds the fifteen rotations of a fully closed **left** fist; the right is derived by the mirror rule above, so there is one hand to tune. `clipFactory.ts` and `tools/rig.py` expand it, in that order of authority.
+
+Two facts about the rest hand that the numbers depend on: palms face **down** in the T-pose, so `-z` curls a finger into the palm; and the thumb needs `+y` as well, or it hangs off the side of the fist instead of coming across the front of it.
+
 ---
 
 ## Clip-Authoring Conventions
@@ -157,7 +165,7 @@ Non-negotiable, and the reason is the clip queue. Ticks can resolve faster than 
 | Convention | Value |
 |---|---|
 | Frame rate | 30 fps |
-| Keyframes per clip | 3–5 — anticipation, contact/extreme, recovery. Interpolate between; do not hand-key every frame. |
+| Keyframes per clip | 3–6 — anticipation, contact/extreme, recovery. Interpolate between; do not hand-key every frame. Only `ko` needs the sixth, because a fall and its landing are two events, not one. |
 | Attack clip length | ~0.5 s (15 frames) |
 | Defense clip length | ~0.4 s (12 frames) |
 | Idle / stance loop | ~1.5 s (45 frames), seamless loop |
@@ -179,9 +187,20 @@ Opting out of grounding puts the whole fall on the author, and there are two way
 
 **Frames between keyframes are not interpolations of their heights.** three.js slerps the rotations and lerps the hips path independently. Pair a large `_rootRot` with a large `_root.y` drop across one segment and the limbs sweep on an arc the two endpoints say nothing about. The `ko` fall did exactly this: every keyframe passed every check, and the right foot still ploughed **14 cm** through the deck for most of a second, because the legs were authored to trail the body while the hips rotated ~88° about a point the legs had to swing clear of.
 
-The fix was not in the fall — `_root.y` and `_rootRot.x` are unchanged — but in the **leg fold**: the hips flex harder through the middle of the fall so the trailing foot lifts, the way a real body's legs do on the way down. The clip now bottoms out 0.4 cm into the deck, the shallowest in the library.
+The fix was in the **leg fold**: the hips flex harder through the middle of the fall so the trailing foot lifts, the way a real body's legs do on the way down.
 
 So: when a clip authors its own root motion, the legs are load-bearing, and **`tools/pose_check.py` check 7 is what proves it** — it skins the real mesh (vertex weights, joint matrices, inverse bind matrices) and evaluates the true lowest vertex at every other frame of every clip, not at keyframes and not on joints.
+
+### A fall is not a descent
+
+The floor check has an opposite, and passing one while failing the other is what a body that *sinks* looks like.
+
+The first `ko` that cleared the deck did so by tipping backwards about planted feet at a constant rate and stopping in mid air — visually, a fighter sinking to the ground standing on both feet. Every keyframe was legal. Nothing went through the floor. It just did not look like anything falling, because two things were missing and neither is a floor problem:
+
+- **Acceleration.** The hips have to speed up. In the current clip they drop 0.9 cm per frame while the knees buckle, then 2.4, then 4.7, and then stop dead at the landing (f26) with a 7-frame settle behind it. A constant rate is an elevator; a rate that grows is gravity. `tools/pose_render.py --trace` prints exactly this column, which is how it is tuned.
+- **Contact.** The body has to end up *on* the deck. Check 7 now measures the terminal clip's last frame against the floor and fails it if the skin settles more than a few centimetres above — the same measurement as the penetration check, read from the other side.
+
+The legs are what buys both. Feet that stay planted give the body nothing to rotate about but the ankles, which is why the old fall could only descend; folding the knees hard through the middle of the fall lifts them clear, lets the hips travel back as well as down, and leaves the fighter landing on the back and shoulders with the legs following.
 
 ### Action-to-clip binding
 

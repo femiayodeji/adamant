@@ -6,3 +6,7 @@ next-env.d.ts
 
 # Staged from statics/models/ by tools/fetch-rig.mjs — not committed twice.
 public/models/
+
+# Contact sheets from tools/pose_render.py — something you look at while working
+# on a clip, not an artefact anything depends on.
+tools/preview/

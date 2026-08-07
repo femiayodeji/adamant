@@ -6,20 +6,31 @@
  * dicts in JSON, interpolated at 30 fps by three.js. That keeps them reviewable
  * and editable as text, per docs/skeleton.md.
  *
- * Two things this file owns beyond track building:
+ * Three things this file owns beyond track building:
  *   - MIRRORING. agent_b is agent_a mirrored across X, so one authored set of
  *     poses yields both corners: swap the Left and Right joints, negate y and z.
  *   - GROUNDING. Bending the knees in pure FK lifts the feet instead of lowering
  *     the hips, so every keyframe's hips height is solved so the lowest toe stays
  *     on the canvas floor. Exact in one pass, because the Hips node is the root
  *     of the bone chain and translating it moves every descendant rigidly.
+ *   - HANDS. A pose asks for a hand shape (`_fist`) rather than naming fifteen
+ *     finger bones, and that is expanded here against the template in
+ *     skeleton-map.json. The rig's rest hand is flat and open; without this every
+ *     punch in the library lands as an open-palm slap.
  */
 
 import * as THREE from 'three';
 
 import rawClips from './clips.json';
 import rawMap from './skeleton-map.json';
-import type { AxisRot, ClipDef, ClipLibrary, Pose, SkeletonMap } from './clipTypes';
+import type {
+  AuthoredPose,
+  AxisRot,
+  ClipDef,
+  ClipLibrary,
+  Pose,
+  SkeletonMap,
+} from './clipTypes';
 
 export const LIBRARY = rawClips as unknown as ClipLibrary;
 export const SKELETON: SkeletonMap = rawMap as unknown as SkeletonMap;
@@ -83,7 +94,7 @@ export class Rig {
 
   /** Apply a fully merged pose to the live skeleton (used for the grounding solve). */
   applyPose(pose: Pose, rootOffset: THREE.Vector3, rootRot: AxisRot | undefined): void {
-    for (const joint of SKELETON_JOINTS) {
+    for (const joint of POSED_JOINTS) {
       const bone = this.bones.get(joint);
       if (!bone) continue;
       bone.quaternion.copy(this.restQuats.get(joint) ?? IDENTITY);
@@ -104,7 +115,7 @@ export class Rig {
   }
 
   restPose(): void {
-    for (const joint of SKELETON_JOINTS) {
+    for (const joint of POSED_JOINTS) {
       this.bones.get(joint)?.quaternion.copy(this.restQuats.get(joint) ?? IDENTITY);
     }
     this.hips.position.copy(this.hipsRest);
@@ -112,7 +123,6 @@ export class Rig {
   }
 }
 
-const SKELETON_JOINTS = Object.keys(SKELETON.joints);
 const IDENTITY = new THREE.Quaternion();
 
 function eulerQuat(rot: AxisRot): THREE.Quaternion {
@@ -124,7 +134,7 @@ function eulerQuat(rot: AxisRot): THREE.Quaternion {
 /** stance + partial override, with joint values clamped to the documented ranges. */
 function mergePose(stance: Pose, override: Pose): Pose {
   const out: Pose = {};
-  for (const joint of SKELETON_JOINTS) {
+  for (const joint of POSED_JOINTS) {
     const rot = override[joint] ?? stance[joint];
     if (rot) out[joint] = clampJoint(joint, rot);
   }
@@ -181,13 +191,70 @@ export function mirrorPose(pose: Pose): Pose {
   return out;
 }
 
+/* -------------------------------------------------------------------- hands */
+
+/**
+ * The full-fist rotation of every finger bone, both hands.
+ *
+ * skeleton-map.json authors the LEFT hand only; the right is derived by the same
+ * mirror rule agent_b's whole clip set is, so there is one hand to tune and no
+ * way for the two to drift apart.
+ */
+const HAND_CURL: Pose = (() => {
+  const out: Pose = {};
+  for (const [joint, rot] of Object.entries(SKELETON.hand.curl)) {
+    out[joint] = rot;
+    out[mirrorJointName(joint)] = mirrorRot(rot);
+  }
+  return out;
+})();
+
+/** Joints a clip can drive: the authored map, plus the finger chains. */
+const POSED_JOINTS = [...Object.keys(SKELETON.joints), ...Object.keys(HAND_CURL)];
+const FINGER_JOINTS = new Set(Object.keys(HAND_CURL));
+
+/**
+ * `_fist` -> actual finger rotations.
+ *
+ * A pose says how closed each hand is and this scales the template: 1 is the
+ * authored fist, 0 the rig's own open rest hand, and anything between is a hand
+ * on its way to one or the other. A hand nobody mentions keeps whatever the
+ * stance gave it, exactly like any other joint.
+ */
+export function expandFist(pose: AuthoredPose): Pose {
+  const curl = pose._fist;
+  const out: Pose = {};
+  for (const [key, value] of Object.entries(pose)) {
+    if (key !== '_fist') out[key] = value as AxisRot;
+  }
+  if (curl === undefined) return out;
+
+  const amounts: { left?: number; right?: number } =
+    typeof curl === 'number' ? { left: curl, right: curl } : curl;
+  for (const [joint, rot] of Object.entries(HAND_CURL)) {
+    const amount = joint.startsWith('Left') ? amounts.left : amounts.right;
+    if (amount === undefined) continue;
+    const scaled: AxisRot = {};
+    for (const axis of ['x', 'y', 'z'] as const) {
+      if (rot![axis] !== undefined) scaled[axis] = rot![axis]! * amount;
+    }
+    out[joint] = scaled;
+  }
+  return out;
+}
+
 /* ---------------------------------------------------------- clip building */
 
 function vec(rot: AxisRot | undefined): THREE.Vector3 {
   return new THREE.Vector3(rot?.x ?? 0, rot?.y ?? 0, rot?.z ?? 0);
 }
 
-function buildClip(name: string, def: ClipDef, stance: Pose, rig: Rig, fps: number) {
+/** A clip whose poses have been through `expandFist` and the mirror. */
+interface ShapedClip extends Omit<ClipDef, 'keys'> {
+  keys: { f: number; pose: Pose }[];
+}
+
+function buildClip(name: string, def: ShapedClip, stance: Pose, rig: Rig, fps: number) {
   const times = def.keys.map((k) => k.f / fps);
   const duration = def.frames / fps;
 
@@ -200,7 +267,8 @@ function buildClip(name: string, def: ClipDef, stance: Pose, rig: Rig, fps: numb
     }
   }
   for (const joint of Object.keys(stance)) {
-    if (!joint.startsWith('_') && SKELETON.joints[joint]) touched.add(joint);
+    if (joint.startsWith('_')) continue;
+    if (SKELETON.joints[joint] || FINGER_JOINTS.has(joint)) touched.add(joint);
   }
 
   const merged = def.keys.map((k) => mergePose(stance, k.pose));
@@ -261,13 +329,18 @@ function buildClip(name: string, def: ClipDef, stance: Pose, rig: Rig, fps: numb
  */
 export function buildClipSet(rig: Rig, mirrored: boolean): ClipSet {
   const fps = LIBRARY.fps;
-  const stance = mirrored ? mirrorPose(LIBRARY.stance) : LIBRARY.stance;
+  // Hands first, mirror second: expanding `_fist` up front means the finger
+  // rotations go through the same joint mirroring as every other joint, so the
+  // two corners cannot end up with differently shaped fists.
+  const shape = (pose: AuthoredPose): Pose => {
+    const expanded = expandFist(pose);
+    return mirrored ? mirrorPose(expanded) : expanded;
+  };
+  const stance = shape(LIBRARY.stance);
   const set: ClipSet = new Map();
 
   for (const [name, def] of Object.entries(LIBRARY.clips)) {
-    const keys = mirrored
-      ? def.keys.map((k) => ({ f: k.f, pose: mirrorPose(k.pose) }))
-      : def.keys;
+    const keys = def.keys.map((k) => ({ f: k.f, pose: shape(k.pose) }));
     set.set(name, buildClip(name, { ...def, keys }, stance, rig, fps));
   }
   return set;

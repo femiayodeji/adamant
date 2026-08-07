@@ -16,6 +16,11 @@
     "root motion, not a pelvis bend, so it is not bound by the Hips range in the skeleton map.",
     "Neither has an entry in docs/skeleton.md's SKELETON_MAP — see SPEC_NOTES.md #2.",
     "",
+    "'_fist' is how closed the hands are: 1 = the fist authored in skeleton-map.json's 'hand'",
+    "section, 0 = the rig's own flat open rest hand, and {\"left\": n, \"right\": n} to drive one",
+    "hand alone. Fifteen finger bones per hand are generated from it at load time, so a punch",
+    "can clench on the way out without burying the pose that matters under finger rotations.",
+    "",
     "'_root.y' is normally computed, not authored: clips with \"ground\": true (the default) get",
     "their hips height solved per keyframe at load time so the lowest toe stays on the canvas",
     "floor while the knees bend. 'ko' opts out and authors its own fall.",
@@ -25,31 +30,32 @@
   ],
   "fps": 30,
   "stance": {
-    "_note": "Orthodox boxing guard: bladed to the fighter's right so the left shoulder leads, weight centred, knees soft, both fists up.",
-    "Hips": { "x": 5, "y": -25 },
+    "_note": "Orthodox boxing guard: bladed to the fighter's right so the left shoulder leads, weight centred, knees soft, elbows DOWN on the ribs and both forearms vertical with the fists at cheek height. The elbows are the load-bearing detail — carried out to the sides the same joint angles read as folded arms rather than as a guard.",
+    "Hips": { "x": 4, "y": -25 },
     "Spine": { "x": 8, "y": -10 },
     "Spine1": { "x": 5, "y": -6 },
     "Spine2": { "x": 3, "y": -4 },
-    "Neck": { "x": 4, "y": 16 },
-    "Head": { "x": 4, "y": 14 },
-    "LeftShoulder": { "z": 8 },
-    "LeftArm": { "x": -20, "y": -30, "z": -62 },
-    "LeftForeArm": { "y": -110 },
-    "LeftHand": { "x": -10 },
-    "RightShoulder": { "z": -8 },
-    "RightArm": { "x": -20, "y": 40, "z": 66 },
-    "RightForeArm": { "y": 122 },
-    "RightHand": { "x": -10 },
+    "Neck": { "x": 10, "y": 16 },
+    "Head": { "x": 6, "y": 14 },
+    "LeftShoulder": { "z": 10 },
+    "LeftArm": { "x": -38, "y": -14, "z": -76 },
+    "LeftForeArm": { "y": -142 },
+    "LeftHand": { "x": -6 },
+    "RightShoulder": { "z": -10 },
+    "RightArm": { "x": -30, "y": 20, "z": 80 },
+    "RightForeArm": { "y": 140 },
+    "RightHand": { "x": -6 },
     "LeftUpLeg": { "x": -12, "z": 8 },
     "LeftLeg": { "x": 18 },
     "LeftFoot": { "x": -4 },
     "RightUpLeg": { "x": 10, "z": -8 },
     "RightLeg": { "x": 22 },
-    "RightFoot": { "x": -10 }
+    "RightFoot": { "x": -10 },
+    "_fist": 0.85
   },
   "clips": {
     "stance": {
-      "_note": "Seamless idle loop played whenever the clip queue is empty. First and last keys are both stance, so the loop is continuous.",
+      "_note": "Seamless idle loop played whenever the clip queue is empty. A boxer at rest is never still: a slow bob on the knees, the guard breathing with it. First and last keys are both stance, so the loop is continuous.",
       "frames": 45,
       "loop": true,
       "keys": [
@@ -59,9 +65,9 @@
           "pose": {
             "Spine": { "x": 10, "y": -10 },
             "Spine1": { "x": 6, "y": -6 },
-            "Neck": { "x": 6, "y": 16 },
-            "LeftArm": { "x": -20, "y": -32, "z": -64 },
-            "RightArm": { "x": -20, "y": 42, "z": 68 },
+            "Neck": { "x": 12, "y": 16 },
+            "LeftArm": { "x": -38, "y": -16, "z": -78 },
+            "RightArm": { "x": -30, "y": 22, "z": 82 },
             "LeftLeg": { "x": 21 },
             "RightLeg": { "x": 25 }
           }
@@ -70,9 +76,9 @@
           "f": 22,
           "pose": {
             "Spine": { "x": 6, "y": -11 },
-            "Head": { "x": 4, "y": 16 },
-            "LeftArm": { "x": -20, "y": -28, "z": -60 },
-            "RightArm": { "x": -20, "y": 38, "z": 64 },
+            "Head": { "x": 6, "y": 16 },
+            "LeftArm": { "x": -38, "y": -12, "z": -74 },
+            "RightArm": { "x": -30, "y": 18, "z": 78 },
             "LeftLeg": { "x": 16 },
             "RightLeg": { "x": 20 },
             "_root": { "z": 1 }
@@ -83,8 +89,8 @@
           "pose": {
             "Spine": { "x": 10, "y": -9 },
             "Spine1": { "x": 6, "y": -6 },
-            "LeftArm": { "x": -20, "y": -33, "z": -64 },
-            "RightArm": { "x": -20, "y": 43, "z": 68 },
+            "LeftArm": { "x": -38, "y": -17, "z": -78 },
+            "RightArm": { "x": -30, "y": 23, "z": 82 },
             "LeftLeg": { "x": 21 },
             "RightLeg": { "x": 25 }
           }
@@ -94,45 +100,48 @@
     },
 
     "jab": {
-      "_note": "Lead (left) hand straight. Small weight load, snap out, snap back.",
+      "_note": "Lead (left) hand straight. Load a beat, then the arm fires level at chin height with the shoulder rolled up against the jaw and the rear hand welded to the cheek; snap back twice as fast as it went out. The fist closes on the way out — the rig's rest hand is flat, and an open one lands as a slap.",
       "frames": 15,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 3,
           "pose": {
-            "Hips": { "x": 5, "y": -30 },
-            "LeftArm": { "x": -20, "y": -24, "z": -60 },
-            "LeftForeArm": { "y": -118 },
-            "_root": { "z": -2 }
+            "Hips": { "x": 4, "y": -30 },
+            "LeftArm": { "x": -38, "y": -8, "z": -72 },
+            "LeftForeArm": { "y": -140 },
+            "_root": { "z": -2 },
+            "_fist": { "left": 1 }
           }
         },
         {
           "f": 7,
           "pose": {
-            "Hips": { "x": 4, "y": -12 },
+            "Hips": { "x": 4, "y": -10 },
             "Spine": { "x": 6, "y": -2 },
             "Spine1": { "x": 4, "y": 0 },
             "Spine2": { "x": 2, "y": 0 },
-            "Neck": { "x": 2, "y": 8 },
-            "Head": { "x": 2, "y": 8 },
-            "LeftShoulder": { "z": 16 },
-            "LeftArm": { "x": -10, "y": -72, "z": -12 },
-            "LeftForeArm": { "y": -12 },
+            "Neck": { "x": 6, "y": 8 },
+            "Head": { "x": 4, "y": 8 },
+            "LeftShoulder": { "z": 22 },
+            "LeftArm": { "x": -6, "y": -74, "z": -2 },
+            "LeftForeArm": { "y": -6 },
             "LeftHand": { "x": 0 },
             "LeftUpLeg": { "x": -16 },
             "LeftLeg": { "x": 14 },
-            "_root": { "z": 6 }
+            "_root": { "z": 7 },
+            "_fist": { "left": 1 }
           }
         },
         {
           "f": 10,
           "pose": {
-            "Hips": { "x": 5, "y": -20 },
-            "LeftShoulder": { "z": 12 },
-            "LeftArm": { "x": -16, "y": -55, "z": -34 },
-            "LeftForeArm": { "y": -70 },
-            "_root": { "z": 2 }
+            "Hips": { "x": 4, "y": -20 },
+            "LeftShoulder": { "z": 16 },
+            "LeftArm": { "x": -24, "y": -46, "z": -40 },
+            "LeftForeArm": { "y": -74 },
+            "_root": { "z": 2 },
+            "_fist": { "left": 1 }
           }
         },
         { "f": 15, "pose": {} }
@@ -140,49 +149,53 @@
     },
 
     "cross": {
-      "_note": "Rear (right) hand straight. Hips rotate through it, rear heel pivots.",
+      "_note": "Rear (right) hand straight. The power comes from the floor: the rear heel pivots out, the hips whip from bladed through square, and the arm arrives last, level, on the centreline. The lead hand does not drop — it stays at the cheek, which is the difference between a cross and a lunge.",
       "frames": 15,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 3,
           "pose": {
-            "Hips": { "x": 5, "y": -34 },
-            "RightArm": { "x": -20, "y": 44, "z": 70 },
-            "RightForeArm": { "y": 128 },
-            "_root": { "z": -2 }
+            "Hips": { "x": 4, "y": -34 },
+            "RightArm": { "x": -30, "y": 24, "z": 84 },
+            "RightForeArm": { "y": 142 },
+            "_root": { "z": -2 },
+            "_fist": { "right": 1 }
           }
         },
         {
           "f": 8,
           "pose": {
-            "Hips": { "x": 3, "y": 5 },
-            "Spine": { "x": 10, "y": 8 },
-            "Spine1": { "x": 6, "y": 6 },
-            "Spine2": { "x": 4, "y": 4 },
-            "Neck": { "x": 2, "y": 4 },
-            "Head": { "x": 2, "y": 4 },
-            "RightShoulder": { "z": -16 },
-            "RightArm": { "x": -10, "y": 78, "z": 14 },
-            "RightForeArm": { "y": 15 },
+            "Hips": { "x": 3, "y": 8 },
+            "Spine": { "x": 8, "y": 10 },
+            "Spine1": { "x": 5, "y": 8 },
+            "Spine2": { "x": 3, "y": 6 },
+            "Neck": { "x": 6, "y": 2 },
+            "Head": { "x": 4, "y": 2 },
+            "RightShoulder": { "z": -22 },
+            "RightArm": { "x": -8, "y": 66, "z": 0 },
+            "RightForeArm": { "y": 6 },
             "RightHand": { "x": 0 },
-            "RightUpLeg": { "x": 4, "y": -12, "z": -6 },
+            "RightUpLeg": { "x": 4, "y": -14, "z": -6 },
             "RightLeg": { "x": 16 },
-            "RightFoot": { "x": -24 },
+            "RightFoot": { "x": -30 },
             "LeftUpLeg": { "x": -14 },
             "LeftLeg": { "x": 20 },
-            "_root": { "z": 8 }
+            "_root": { "z": 8 },
+            "_fist": { "right": 1 }
           }
         },
         {
           "f": 11,
           "pose": {
-            "Hips": { "x": 4, "y": -14 },
+            "Hips": { "x": 4, "y": -12 },
             "Spine": { "x": 8, "y": 0 },
-            "RightShoulder": { "z": -12 },
-            "RightArm": { "x": -16, "y": 58, "z": 44 },
-            "RightForeArm": { "y": 80 },
-            "_root": { "z": 3 }
+            "RightShoulder": { "z": -16 },
+            "RightArm": { "x": -20, "y": 46, "z": 44 },
+            "RightForeArm": { "y": 78 },
+            "RightFoot": { "x": -20 },
+            "_root": { "z": 3 },
+            "_fist": { "right": 1 }
           }
         },
         { "f": 15, "pose": {} }
@@ -190,48 +203,53 @@
     },
 
     "hook": {
-      "_note": "Lead (left) hook. Loads away, then a horizontal arc driven from the hips with the elbow up.",
+      "_note": "Lead (left) hook. Loads short and away, then the lead foot pivots and the hips throw the shoulder round; the elbow comes UP to shoulder height and the arm holds its angle while the body swings it, which is what makes a hook a hook rather than a swung straight. tools/pose_check.py asserts the lateral sweep for exactly that reason.",
       "frames": 15,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 4,
           "pose": {
-            "Hips": { "x": 5, "y": -36 },
-            "Spine": { "x": 8, "y": -16 },
-            "LeftArm": { "x": -14, "y": -10, "z": -40 },
-            "LeftForeArm": { "y": -100 },
-            "_root": { "x": -2, "z": -2 }
+            "Hips": { "x": 4, "y": -38 },
+            "Spine": { "x": 8, "y": -18 },
+            "LeftShoulder": { "z": 4 },
+            "LeftArm": { "x": -30, "y": 4, "z": -60 },
+            "LeftForeArm": { "y": -120 },
+            "_root": { "x": -2, "z": -2 },
+            "_fist": { "left": 1 }
           }
         },
         {
           "f": 8,
           "pose": {
-            "Hips": { "x": 3, "y": 8 },
-            "Spine": { "x": 6, "y": 10 },
-            "Spine1": { "x": 4, "y": 8 },
-            "Spine2": { "x": 2, "y": 5 },
-            "Neck": { "x": 2, "y": 6 },
-            "Head": { "x": 2, "y": 6 },
-            "LeftShoulder": { "z": 18 },
-            "LeftArm": { "x": 0, "y": -50, "z": 8 },
-            "LeftForeArm": { "y": -85 },
+            "Hips": { "x": 3, "y": 12 },
+            "Spine": { "x": 6, "y": 14 },
+            "Spine1": { "x": 4, "y": 10 },
+            "Spine2": { "x": 2, "y": 8 },
+            "Neck": { "x": 6, "y": 0 },
+            "Head": { "x": 4, "y": 0 },
+            "LeftShoulder": { "z": 24 },
+            "LeftArm": { "x": 0, "y": -58, "z": 20 },
+            "LeftForeArm": { "y": -72 },
             "LeftHand": { "x": 0 },
-            "LeftUpLeg": { "x": -14, "y": -10 },
+            "LeftUpLeg": { "x": -14, "y": -12 },
             "LeftLeg": { "x": 16 },
-            "LeftFoot": { "x": -16 },
-            "RightUpLeg": { "x": 8, "y": -8 },
-            "_root": { "z": 5 }
+            "LeftFoot": { "x": -18 },
+            "RightUpLeg": { "x": 8, "y": -10 },
+            "_root": { "z": 6 },
+            "_fist": { "left": 1 }
           }
         },
         {
           "f": 11,
           "pose": {
-            "Hips": { "x": 4, "y": -6 },
-            "LeftShoulder": { "z": 12 },
-            "LeftArm": { "x": -10, "y": -35, "z": -25 },
-            "LeftForeArm": { "y": -100 },
-            "_root": { "z": 2 }
+            "Hips": { "x": 4, "y": -8 },
+            "Spine": { "x": 8, "y": 2 },
+            "LeftShoulder": { "z": 16 },
+            "LeftArm": { "x": -20, "y": -34, "z": -30 },
+            "LeftForeArm": { "y": -104 },
+            "_root": { "z": 2 },
+            "_fist": { "left": 1 }
           }
         },
         { "f": 15, "pose": {} }
@@ -239,7 +257,7 @@
     },
 
     "block_high": {
-      "_note": "Gloves up beside the head, elbows in, chin tucked, brief hold.",
+      "_note": "Gloves pressed to the temples, elbows squeezed together in front of the ribs, chin buried, knees loaded to absorb. Held for a third of a second — a block is a decision to stand there, and it should look like one.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },
@@ -248,20 +266,21 @@
           "pose": {
             "Spine": { "x": 14, "y": -8 },
             "Spine1": { "x": 10, "y": -5 },
-            "Neck": { "x": 12, "y": 14 },
-            "Head": { "x": 8, "y": 12 },
-            "LeftShoulder": { "z": 14 },
-            "LeftArm": { "x": -15, "y": -40, "z": -40 },
-            "LeftForeArm": { "y": -125 },
-            "LeftHand": { "x": -20 },
-            "RightShoulder": { "z": -14 },
-            "RightArm": { "x": -15, "y": 44, "z": 44 },
-            "RightForeArm": { "y": 128 },
-            "RightHand": { "x": -20 },
+            "Neck": { "x": 20, "y": 14 },
+            "Head": { "x": 14, "y": 12 },
+            "LeftShoulder": { "z": 20 },
+            "LeftArm": { "x": -44, "y": -22, "z": -70 },
+            "LeftForeArm": { "y": -145 },
+            "LeftHand": { "x": -14 },
+            "RightShoulder": { "z": -20 },
+            "RightArm": { "x": -40, "y": 26, "z": 74 },
+            "RightForeArm": { "y": 145 },
+            "RightHand": { "x": -14 },
             "LeftUpLeg": { "x": -16, "z": 8 },
             "LeftLeg": { "x": 26 },
             "RightUpLeg": { "x": 8, "z": -8 },
-            "RightLeg": { "x": 30 }
+            "RightLeg": { "x": 30 },
+            "_fist": 1
           }
         },
         {
@@ -269,20 +288,21 @@
           "pose": {
             "Spine": { "x": 14, "y": -8 },
             "Spine1": { "x": 10, "y": -5 },
-            "Neck": { "x": 12, "y": 14 },
-            "Head": { "x": 8, "y": 12 },
-            "LeftShoulder": { "z": 14 },
-            "LeftArm": { "x": -15, "y": -40, "z": -40 },
-            "LeftForeArm": { "y": -125 },
-            "LeftHand": { "x": -20 },
-            "RightShoulder": { "z": -14 },
-            "RightArm": { "x": -15, "y": 44, "z": 44 },
-            "RightForeArm": { "y": 128 },
-            "RightHand": { "x": -20 },
+            "Neck": { "x": 20, "y": 14 },
+            "Head": { "x": 14, "y": 12 },
+            "LeftShoulder": { "z": 20 },
+            "LeftArm": { "x": -44, "y": -22, "z": -70 },
+            "LeftForeArm": { "y": -145 },
+            "LeftHand": { "x": -14 },
+            "RightShoulder": { "z": -20 },
+            "RightArm": { "x": -40, "y": 26, "z": 74 },
+            "RightForeArm": { "y": 145 },
+            "RightHand": { "x": -14 },
             "LeftUpLeg": { "x": -16, "z": 8 },
             "LeftLeg": { "x": 26 },
             "RightUpLeg": { "x": 8, "z": -8 },
-            "RightLeg": { "x": 30 }
+            "RightLeg": { "x": 30 },
+            "_fist": 1
           }
         },
         { "f": 12, "pose": {} }
@@ -290,7 +310,7 @@
     },
 
     "block_low": {
-      "_note": "Elbows dropped onto the ribs, forearms across the body, deeper crouch.",
+      "_note": "Elbows dropped onto the floating ribs and the forearms folded across the belt, head still up and looking over them, deeper crouch. Where block_high hides the chin, this one hides the body — a spectator should be able to tell which at a glance.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },
@@ -301,16 +321,21 @@
             "Spine": { "x": 24, "y": -10 },
             "Spine1": { "x": 16, "y": -6 },
             "Spine2": { "x": 10, "y": -4 },
-            "Neck": { "x": 18, "y": 16 },
-            "Head": { "x": 10, "y": 14 },
-            "LeftArm": { "x": -25, "y": -20, "z": -72 },
-            "LeftForeArm": { "y": -100 },
-            "RightArm": { "x": -25, "y": 24, "z": 76 },
-            "RightForeArm": { "y": 104 },
+            "Neck": { "x": 4, "y": 16 },
+            "Head": { "x": -4, "y": 14 },
+            "LeftShoulder": { "z": 4 },
+            "LeftArm": { "x": -50, "y": -6, "z": -84 },
+            "LeftForeArm": { "y": -96 },
+            "LeftHand": { "x": -10 },
+            "RightShoulder": { "z": -4 },
+            "RightArm": { "x": -46, "y": 10, "z": 88 },
+            "RightForeArm": { "y": 100 },
+            "RightHand": { "x": -10 },
             "LeftUpLeg": { "x": -20, "z": 10 },
             "LeftLeg": { "x": 34 },
             "RightUpLeg": { "x": 6, "z": -10 },
-            "RightLeg": { "x": 38 }
+            "RightLeg": { "x": 38 },
+            "_fist": 1
           }
         },
         {
@@ -320,16 +345,21 @@
             "Spine": { "x": 24, "y": -10 },
             "Spine1": { "x": 16, "y": -6 },
             "Spine2": { "x": 10, "y": -4 },
-            "Neck": { "x": 18, "y": 16 },
-            "Head": { "x": 10, "y": 14 },
-            "LeftArm": { "x": -25, "y": -20, "z": -72 },
-            "LeftForeArm": { "y": -100 },
-            "RightArm": { "x": -25, "y": 24, "z": 76 },
-            "RightForeArm": { "y": 104 },
+            "Neck": { "x": 4, "y": 16 },
+            "Head": { "x": -4, "y": 14 },
+            "LeftShoulder": { "z": 4 },
+            "LeftArm": { "x": -50, "y": -6, "z": -84 },
+            "LeftForeArm": { "y": -96 },
+            "LeftHand": { "x": -10 },
+            "RightShoulder": { "z": -4 },
+            "RightArm": { "x": -46, "y": 10, "z": 88 },
+            "RightForeArm": { "y": 100 },
+            "RightHand": { "x": -10 },
             "LeftUpLeg": { "x": -20, "z": 10 },
             "LeftLeg": { "x": 34 },
             "RightUpLeg": { "x": 6, "z": -10 },
-            "RightLeg": { "x": 38 }
+            "RightLeg": { "x": 38 },
+            "_fist": 1
           }
         },
         { "f": 12, "pose": {} }
@@ -337,43 +367,43 @@
     },
 
     "dodge_left": {
-      "_note": "Slip to the fighter's OWN left (+x local). Hips shift, torso side-bends, head leaves the centreline. Mirrored for agent_b by the renderer, per skeleton.md.",
+      "_note": "Slip to the fighter's OWN left (+x local). The head leaves the centreline first and the weight follows onto the lead leg; the guard never drops, because a slip that opens the guard is a slip that gets countered. Mirrored for agent_b by the renderer, per skeleton.md.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 3,
           "pose": {
-            "Hips": { "x": 5, "y": -30, "z": -8 },
-            "Spine": { "x": 10, "y": -10, "z": -12 },
-            "Spine1": { "x": 6, "y": -6, "z": -8 },
-            "Neck": { "x": 4, "y": 10, "z": -8 },
-            "Head": { "x": 4, "y": 10, "z": -6 },
-            "LeftArm": { "x": -20, "y": -30, "z": -66 },
-            "RightArm": { "x": -20, "y": 40, "z": 70 },
+            "Hips": { "x": 6, "y": -30, "z": -10 },
+            "Spine": { "x": 12, "y": -10, "z": -14 },
+            "Spine1": { "x": 8, "y": -6, "z": -10 },
+            "Neck": { "x": 10, "y": 10, "z": -10 },
+            "Head": { "x": 6, "y": 10, "z": -8 },
+            "LeftArm": { "x": -38, "y": -14, "z": -80 },
+            "RightArm": { "x": -30, "y": 20, "z": 84 },
             "LeftUpLeg": { "x": -12, "z": 16 },
             "LeftLeg": { "x": 24 },
             "RightUpLeg": { "x": 6, "z": -4 },
             "RightLeg": { "x": 26 },
-            "_root": { "x": 8 }
+            "_root": { "x": 9 }
           }
         },
         {
           "f": 7,
           "pose": {
-            "Hips": { "x": 5, "y": -30, "z": -10 },
-            "Spine": { "x": 12, "y": -10, "z": -16 },
-            "Spine1": { "x": 8, "y": -6, "z": -10 },
-            "Spine2": { "x": 4, "y": -4, "z": -6 },
-            "Neck": { "x": 4, "y": 12, "z": -10 },
-            "Head": { "x": 4, "y": 12, "z": -8 },
-            "LeftArm": { "x": -20, "y": -30, "z": -66 },
-            "RightArm": { "x": -20, "y": 40, "z": 70 },
+            "Hips": { "x": 6, "y": -30, "z": -12 },
+            "Spine": { "x": 14, "y": -10, "z": -18 },
+            "Spine1": { "x": 9, "y": -6, "z": -12 },
+            "Spine2": { "x": 5, "y": -4, "z": -8 },
+            "Neck": { "x": 10, "y": 12, "z": -12 },
+            "Head": { "x": 6, "y": 12, "z": -10 },
+            "LeftArm": { "x": -38, "y": -14, "z": -80 },
+            "RightArm": { "x": -30, "y": 20, "z": 84 },
             "LeftUpLeg": { "x": -12, "z": 20 },
             "LeftLeg": { "x": 26 },
             "RightUpLeg": { "x": 6, "z": -2 },
             "RightLeg": { "x": 28 },
-            "_root": { "x": 14 }
+            "_root": { "x": 16 }
           }
         },
         { "f": 12, "pose": {} }
@@ -381,43 +411,43 @@
     },
 
     "dodge_right": {
-      "_note": "Slip to the fighter's OWN right (-x local) — for an orthodox stance this rolls back over the rear leg.",
+      "_note": "Slip to the fighter's OWN right (-x local) — for an orthodox stance this rolls back over the rear leg, so the fighter drops a little as well as moving across.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 3,
           "pose": {
-            "Hips": { "x": 5, "y": -20, "z": 8 },
-            "Spine": { "x": 10, "y": -8, "z": 12 },
-            "Spine1": { "x": 6, "y": -4, "z": 8 },
-            "Neck": { "x": 4, "y": 20, "z": 8 },
-            "Head": { "x": 4, "y": 16, "z": 6 },
-            "LeftArm": { "x": -20, "y": -30, "z": -58 },
-            "RightArm": { "x": -20, "y": 40, "z": 62 },
+            "Hips": { "x": 6, "y": -20, "z": 10 },
+            "Spine": { "x": 12, "y": -8, "z": 14 },
+            "Spine1": { "x": 8, "y": -4, "z": 10 },
+            "Neck": { "x": 10, "y": 20, "z": 10 },
+            "Head": { "x": 6, "y": 16, "z": 8 },
+            "LeftArm": { "x": -38, "y": -14, "z": -72 },
+            "RightArm": { "x": -30, "y": 20, "z": 76 },
             "RightUpLeg": { "x": 10, "z": -16 },
             "RightLeg": { "x": 30 },
             "LeftUpLeg": { "x": -14, "z": 6 },
             "LeftLeg": { "x": 22 },
-            "_root": { "x": -8 }
+            "_root": { "x": -9 }
           }
         },
         {
           "f": 7,
           "pose": {
-            "Hips": { "x": 5, "y": -18, "z": 10 },
-            "Spine": { "x": 12, "y": -6, "z": 16 },
-            "Spine1": { "x": 8, "y": -4, "z": 10 },
-            "Spine2": { "x": 4, "y": -2, "z": 6 },
-            "Neck": { "x": 4, "y": 22, "z": 10 },
-            "Head": { "x": 4, "y": 18, "z": 8 },
-            "LeftArm": { "x": -20, "y": -30, "z": -58 },
-            "RightArm": { "x": -20, "y": 40, "z": 62 },
+            "Hips": { "x": 6, "y": -18, "z": 12 },
+            "Spine": { "x": 14, "y": -6, "z": 18 },
+            "Spine1": { "x": 9, "y": -4, "z": 12 },
+            "Spine2": { "x": 5, "y": -2, "z": 8 },
+            "Neck": { "x": 10, "y": 22, "z": 12 },
+            "Head": { "x": 6, "y": 18, "z": 10 },
+            "LeftArm": { "x": -38, "y": -14, "z": -72 },
+            "RightArm": { "x": -30, "y": 20, "z": 76 },
             "RightUpLeg": { "x": 10, "z": -20 },
             "RightLeg": { "x": 32 },
             "LeftUpLeg": { "x": -14, "z": 4 },
             "LeftLeg": { "x": 24 },
-            "_root": { "x": -14 }
+            "_root": { "x": -16 }
           }
         },
         { "f": 12, "pose": {} }
@@ -425,7 +455,7 @@
     },
 
     "idle": {
-      "_note": "The idle ACTION (arena_spec 2: +20 stamina). Deliberately distinct from the stance loop — guard drops, deep breath, guard back up — so a spectator can see a fighter choosing to recover. See SPEC_NOTES.md #3.",
+      "_note": "The idle ACTION (arena_spec 2: +20 stamina). Deliberately distinct from the stance loop — the guard comes down, the hands unclench, the chest fills, and the guard goes back up — so a spectator can see a fighter choosing to recover. See SPEC_NOTES.md #3.",
       "frames": 45,
       "keys": [
         { "f": 0, "pose": {} },
@@ -444,7 +474,8 @@
             "RightArm": { "x": -20, "y": 22, "z": 80 },
             "RightForeArm": { "y": 92 },
             "LeftLeg": { "x": 12 },
-            "RightLeg": { "x": 14 }
+            "RightLeg": { "x": 14 },
+            "_fist": 0.3
           }
         },
         {
@@ -460,16 +491,18 @@
             "RightArm": { "x": -20, "y": 20, "z": 84 },
             "RightForeArm": { "y": 86 },
             "LeftLeg": { "x": 14 },
-            "RightLeg": { "x": 16 }
+            "RightLeg": { "x": 16 },
+            "_fist": 0.25
           }
         },
         {
           "f": 36,
           "pose": {
-            "LeftArm": { "x": -20, "y": -24, "z": -70 },
-            "LeftForeArm": { "y": -95 },
-            "RightArm": { "x": -20, "y": 28, "z": 72 },
-            "RightForeArm": { "y": 104 }
+            "LeftArm": { "x": -30, "y": -18, "z": -74 },
+            "LeftForeArm": { "y": -110 },
+            "RightArm": { "x": -26, "y": 22, "z": 78 },
+            "RightForeArm": { "y": 116 },
+            "_fist": 0.6
           }
         },
         { "f": 45, "pose": {} }
@@ -477,40 +510,43 @@
     },
 
     "void": {
-      "_note": "Played INSTEAD OF the action's own clip when the tick carried a 'void' event for this fighter (arena_spec 4.6, the repeat cap). The punch never happened, so no strike clip may play: the lead hand loads, jams a third of the way out, stutters twice against the block and drops back to guard. Event-driven like 'exhausted', not a ninth action — clip name is still the action name everywhere else. See SPEC_NOTES.md #13.",
+      "_note": "Played INSTEAD OF the action's own clip when the tick carried a 'void' event for this fighter (arena_spec 4.6, the repeat cap). The punch never happened, so no strike clip may play: the lead hand loads, jams a third of the way out, stutters against the block and drops back to guard. Event-driven like 'exhausted', not a ninth action — clip name is still the action name everywhere else. See SPEC_NOTES.md #13.",
       "frames": 16,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 4,
           "pose": {
-            "Hips": { "x": 5, "y": -31 },
-            "LeftArm": { "x": -20, "y": -24, "z": -60 },
-            "LeftForeArm": { "y": -118 },
-            "_root": { "z": -3 }
+            "Hips": { "x": 4, "y": -31 },
+            "LeftArm": { "x": -38, "y": -8, "z": -72 },
+            "LeftForeArm": { "y": -140 },
+            "_root": { "z": -3 },
+            "_fist": { "left": 1 }
           }
         },
         {
           "f": 7,
           "pose": {
-            "Hips": { "x": 5, "y": -27 },
+            "Hips": { "x": 4, "y": -27 },
             "Spine": { "x": 8, "y": -8 },
-            "LeftShoulder": { "z": 14 },
-            "LeftArm": { "x": -16, "y": -44, "z": -44 },
+            "LeftShoulder": { "z": 16 },
+            "LeftArm": { "x": -26, "y": -44, "z": -46 },
             "LeftForeArm": { "y": -84 },
-            "_root": { "z": -1 }
+            "_root": { "z": -1 },
+            "_fist": { "left": 1 }
           }
         },
         {
           "f": 11,
           "pose": {
-            "Hips": { "x": 6, "y": -33 },
-            "Neck": { "x": 9, "y": 16 },
-            "Head": { "x": 8, "y": 16 },
+            "Hips": { "x": 5, "y": -33 },
+            "Neck": { "x": 14, "y": 16 },
+            "Head": { "x": 10, "y": 16 },
             "LeftShoulder": { "z": 4 },
-            "LeftArm": { "x": -20, "y": -20, "z": -64 },
-            "LeftForeArm": { "y": -124 },
-            "_root": { "z": -5 }
+            "LeftArm": { "x": -38, "y": -6, "z": -76 },
+            "LeftForeArm": { "y": -145 },
+            "_root": { "z": -5 },
+            "_fist": { "left": 0.7 }
           }
         },
         { "f": 16, "pose": {} }
@@ -518,7 +554,7 @@
     },
 
     "exhausted": {
-      "_note": "Played instead of idle when the tick carried an 'exhausted' event (arena_spec 3): the action was unaffordable and got converted. Hands drop, heavy breathing — the stamina economy made legible. See SPEC_NOTES.md #4.",
+      "_note": "Played instead of idle when the tick carried an 'exhausted' event (arena_spec 3): the action was unaffordable and got converted. Hands drop off the guard and open, the chest heaves — the stamina economy made legible. See SPEC_NOTES.md #4.",
       "frames": 45,
       "keys": [
         { "f": 0, "pose": {} },
@@ -540,7 +576,8 @@
             "LeftUpLeg": { "x": -18, "z": 8 },
             "LeftLeg": { "x": 30 },
             "RightUpLeg": { "x": 4, "z": -8 },
-            "RightLeg": { "x": 34 }
+            "RightLeg": { "x": 34 },
+            "_fist": 0.2
           }
         },
         {
@@ -558,7 +595,8 @@
             "RightArm": { "x": -20, "y": 12, "z": 86 },
             "RightForeArm": { "y": 42 },
             "LeftLeg": { "x": 26 },
-            "RightLeg": { "x": 30 }
+            "RightLeg": { "x": 30 },
+            "_fist": 0.15
           }
         },
         {
@@ -578,7 +616,8 @@
             "LeftUpLeg": { "x": -18, "z": 8 },
             "LeftLeg": { "x": 30 },
             "RightUpLeg": { "x": 4, "z": -8 },
-            "RightLeg": { "x": 34 }
+            "RightLeg": { "x": 34 },
+            "_fist": 0.2
           }
         },
         { "f": 45, "pose": {} }
@@ -586,7 +625,7 @@
     },
 
     "hit_react": {
-      "_note": "Played on a 'hit' event against this fighter. Head snaps back, weight goes onto the rear leg, recover.",
+      "_note": "Played on a 'hit' event against this fighter. The head goes first and the body follows it: chin snaps up and away, weight dumps onto the rear leg, the fighter is shoved back off the punch, then gathers itself and returns to the guard.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },
@@ -597,15 +636,19 @@
             "Spine": { "x": -10, "y": -10, "z": 6 },
             "Spine1": { "x": -8, "y": -6, "z": 4 },
             "Spine2": { "x": -5, "y": -4, "z": 2 },
-            "Neck": { "x": -30, "y": 16, "z": 12 },
-            "Head": { "x": -22, "y": 14, "z": 8 },
-            "LeftArm": { "x": -20, "y": -26, "z": -52 },
-            "RightArm": { "x": -20, "y": 36, "z": 56 },
+            "Neck": { "x": -34, "y": 16, "z": 14 },
+            "Head": { "x": -26, "y": 14, "z": 10 },
+            "LeftShoulder": { "z": 2 },
+            "LeftArm": { "x": -30, "y": -8, "z": -66 },
+            "LeftForeArm": { "y": -110 },
+            "RightShoulder": { "z": -2 },
+            "RightArm": { "x": -24, "y": 12, "z": 70 },
+            "RightForeArm": { "y": 112 },
             "LeftUpLeg": { "x": -4, "z": 8 },
             "LeftLeg": { "x": 12 },
             "RightUpLeg": { "x": 16, "z": -8 },
             "RightLeg": { "x": 32 },
-            "_root": { "x": -2, "z": -10 }
+            "_root": { "x": -2, "z": -11 }
           }
         },
         {
@@ -613,8 +656,10 @@
           "pose": {
             "Hips": { "x": 8, "y": -25 },
             "Spine": { "x": 12, "y": -10 },
-            "Neck": { "x": -6, "y": 16 },
-            "Head": { "x": -2, "y": 14 },
+            "Neck": { "x": 0, "y": 16 },
+            "Head": { "x": 0, "y": 14 },
+            "LeftArm": { "x": -38, "y": -14, "z": -74 },
+            "LeftForeArm": { "y": -136 },
             "_root": { "z": -4 }
           }
         },
@@ -623,35 +668,37 @@
     },
 
     "riposte": {
-      "_note": "Played on a 'dodged' event where this fighter is the defender (arena_spec 2 riposte, 5 chip damage). A short counter flick with the rear hand out of the slip.",
+      "_note": "Played on a 'dodged' event where this fighter is the defender (arena_spec 2 riposte, 5 chip damage). A short counter flick with the rear hand out of the slip — the same mechanics as the cross, half the commitment and half the travel.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },
         {
           "f": 4,
           "pose": {
-            "Hips": { "x": 4, "y": 0 },
-            "Spine": { "x": 6, "y": 8 },
-            "Spine1": { "x": 4, "y": 6 },
-            "Spine2": { "x": 2, "y": 4 },
-            "Neck": { "x": 2, "y": 6 },
-            "Head": { "x": 2, "y": 6 },
-            "RightShoulder": { "z": -16 },
-            "RightArm": { "x": -8, "y": 74, "z": 10 },
-            "RightForeArm": { "y": 18 },
+            "Hips": { "x": 4, "y": 2 },
+            "Spine": { "x": 6, "y": 10 },
+            "Spine1": { "x": 4, "y": 8 },
+            "Spine2": { "x": 2, "y": 6 },
+            "Neck": { "x": 6, "y": 4 },
+            "Head": { "x": 4, "y": 4 },
+            "RightShoulder": { "z": -20 },
+            "RightArm": { "x": -8, "y": 62, "z": 6 },
+            "RightForeArm": { "y": 14 },
             "RightHand": { "x": 0 },
             "RightUpLeg": { "x": 6, "y": -10, "z": -6 },
-            "_root": { "z": 6 }
+            "_root": { "z": 6 },
+            "_fist": { "right": 1 }
           }
         },
         {
           "f": 8,
           "pose": {
             "Hips": { "x": 4, "y": -14 },
-            "RightShoulder": { "z": -12 },
-            "RightArm": { "x": -16, "y": 58, "z": 44 },
+            "RightShoulder": { "z": -14 },
+            "RightArm": { "x": -20, "y": 46, "z": 46 },
             "RightForeArm": { "y": 80 },
-            "_root": { "z": 2 }
+            "_root": { "z": 2 },
+            "_fist": { "right": 1 }
           }
         },
         { "f": 12, "pose": {} }
@@ -659,105 +706,136 @@
     },
 
     "ko": {
-      "_note": "Terminal — the only clip exempt from returning to STANCE. Stagger, buckle, fall backwards, settle supine with the feet toward the opponent. Root motion is hand-authored, so grounding is off, which makes the LEG FOLD load-bearing: the hips rotate ~88° about a point the legs have to swing clear of, and legs that merely trail the body drag the feet metres-deep through the deck between keyframes. Solved against the skinned mesh, not the toe joints — tools/pose_check.py check 7.",
+      "_note": "Terminal — the only clip exempt from returning to STANCE. It is also the only clip that has to obey gravity, and the two failures it can have are opposites: a body that ploughs through the deck, and a body that descends at a constant rate and stops in the air. The second one is what a rigid backward tip about planted feet looks like, and it reads as sinking rather than falling. So: the legs buckle first and the fighter loses its height standing up, the hips then accelerate — 0.9 cm per frame, then 2.4, then 4.7 — while the fold in the knees swings the feet clear of the arc, the back lands at f26 and stops the fall dead, and the last third is dead weight settling: head rolling back onto the deck, arms and legs going slack. Run tools/pose_render.py ko --trace to see that column; a constant rate there is an elevator, not a fall. Root motion is hand-authored (grounding off), which makes the leg fold load-bearing: the hips rotate ~90 degrees about a point the legs have to swing clear of. Verified on the skinned mesh, not the toe joints — tools/pose_check.py check 7, which also asserts that the settled body is ON the deck.",
       "frames": 45,
       "terminal": true,
       "ground": false,
       "keys": [
         { "f": 0, "pose": {} },
         {
-          "f": 6,
+          "f": 7,
           "pose": {
-            "Hips": { "x": -12, "y": -25 },
+            "Hips": { "x": -14, "y": -25 },
             "Spine": { "x": -16, "y": -10 },
             "Spine1": { "x": -10, "y": -6 },
-            "Neck": { "x": -34, "y": 16 },
-            "Head": { "x": -26, "y": 14 },
+            "Neck": { "x": -36, "y": 16 },
+            "Head": { "x": -28, "y": 14 },
             "LeftShoulder": { "z": 2 },
-            "LeftArm": { "x": -20, "y": -20, "z": -80 },
-            "LeftForeArm": { "y": -60 },
+            "LeftArm": { "x": -20, "y": -14, "z": -78 },
+            "LeftForeArm": { "y": -66 },
             "RightShoulder": { "z": -2 },
-            "RightArm": { "x": -20, "y": 24, "z": 84 },
-            "RightForeArm": { "y": 64 },
-            "LeftUpLeg": { "x": 6, "z": 8 },
-            "LeftLeg": { "x": 22 },
-            "RightUpLeg": { "x": 4, "z": -8 },
-            "RightLeg": { "x": 42 },
-            "_root": { "y": 3, "z": -14 }
+            "RightArm": { "x": -20, "y": 18, "z": 82 },
+            "RightForeArm": { "y": 70 },
+            "LeftUpLeg": { "x": -22, "z": 10 },
+            "LeftLeg": { "x": 48 },
+            "RightUpLeg": { "x": -8, "z": -10 },
+            "RightLeg": { "x": 54 },
+            "_rootRot": { "x": -7 },
+            "_root": { "y": -5, "z": -7 },
+            "_fist": 0.55
           }
         },
         {
           "f": 16,
           "pose": {
-            "Hips": { "x": -10, "y": -10, "z": -6 },
-            "Spine": { "x": -24, "y": -6 },
-            "Spine1": { "x": -14 },
-            "Neck": { "x": -20, "y": 10 },
-            "Head": { "x": -14, "y": 8 },
-            "LeftArm": { "x": -20, "y": 10, "z": -55 },
-            "LeftForeArm": { "y": -40 },
-            "RightArm": { "x": -20, "y": -10, "z": 58 },
-            "RightForeArm": { "y": 44 },
-            "LeftUpLeg": { "x": -28, "z": 10 },
-            "LeftLeg": { "x": 60 },
-            "RightUpLeg": { "x": -40, "z": -10 },
-            "RightLeg": { "x": 72 },
+            "Hips": { "x": -8, "y": -12, "z": -6 },
+            "Spine": { "x": -20, "y": -6 },
+            "Spine1": { "x": -12 },
+            "Neck": { "x": -22, "y": 10 },
+            "Head": { "x": -16, "y": 8 },
+            "LeftArm": { "x": -20, "y": 24, "z": -48 },
+            "LeftForeArm": { "y": -34 },
+            "RightArm": { "x": -20, "y": -20, "z": 52 },
+            "RightForeArm": { "y": 38 },
+            "LeftUpLeg": { "x": -50, "z": 12 },
+            "LeftLeg": { "x": 88 },
+            "RightUpLeg": { "x": -60, "z": -12 },
+            "RightLeg": { "x": 98 },
             "LeftFoot": { "x": -2 },
             "RightFoot": { "x": -4 },
-            "_rootRot": { "x": -30 },
-            "_root": { "y": -24, "z": -26 }
+            "_rootRot": { "x": -32 },
+            "_root": { "y": -28, "z": -18 },
+            "_fist": 0.35
           }
         },
         {
-          "f": 30,
+          "f": 26,
           "pose": {
-            "Hips": { "x": 0, "y": -4 },
-            "Spine": { "x": -8, "y": -2 },
-            "Spine1": { "x": -4 },
-            "Spine2": { "x": 0 },
-            "Neck": { "x": 14, "y": 4 },
-            "Head": { "x": 8, "y": 4 },
+            "Hips": { "x": 0, "y": -6 },
+            "Spine": { "x": -10, "y": -2 },
+            "Spine1": { "x": -6 },
+            "Spine2": { "x": -2 },
+            "Neck": { "x": -12, "y": 4 },
+            "Head": { "x": -8, "y": 4 },
             "LeftShoulder": { "z": 0 },
-            "LeftArm": { "x": -10, "y": -6, "z": -34 },
+            "LeftArm": { "x": -10, "y": 10, "z": -30 },
             "LeftForeArm": { "y": -26 },
             "RightShoulder": { "z": 0 },
-            "RightArm": { "x": -10, "y": 8, "z": 36 },
+            "RightArm": { "x": -10, "y": -8, "z": 32 },
             "RightForeArm": { "y": 30 },
-            "LeftUpLeg": { "x": -22, "z": 12 },
-            "LeftLeg": { "x": 25 },
-            "RightUpLeg": { "x": -16, "z": -10 },
-            "RightLeg": { "x": 20 },
-            "LeftFoot": { "x": 10 },
-            "RightFoot": { "x": 10 },
-            "_rootRot": { "x": -84 },
-            "_root": { "y": -84, "z": -36 }
+            "LeftUpLeg": { "x": -32, "z": 14 },
+            "LeftLeg": { "x": 46 },
+            "RightUpLeg": { "x": -26, "z": -12 },
+            "RightLeg": { "x": 38 },
+            "LeftFoot": { "x": 8 },
+            "RightFoot": { "x": 8 },
+            "_rootRot": { "x": -86 },
+            "_root": { "y": -75, "z": -36 },
+            "_fist": 0.25
+          }
+        },
+        {
+          "f": 33,
+          "pose": {
+            "Hips": { "x": 0, "y": -2 },
+            "Spine": { "x": -4, "y": 0 },
+            "Spine1": { "x": -2 },
+            "Spine2": { "x": 0 },
+            "Neck": { "x": 12, "y": 2 },
+            "Head": { "x": 8, "y": 2 },
+            "LeftArm": { "x": -8, "y": 0, "z": -24 },
+            "LeftForeArm": { "y": -18 },
+            "LeftHand": { "x": 0 },
+            "RightArm": { "x": -8, "y": 2, "z": 26 },
+            "RightForeArm": { "y": 20 },
+            "RightHand": { "x": 0 },
+            "LeftUpLeg": { "x": -12, "z": 16 },
+            "LeftLeg": { "x": 22 },
+            "RightUpLeg": { "x": -8, "z": -14 },
+            "RightLeg": { "x": 16 },
+            "LeftFoot": { "x": 6 },
+            "RightFoot": { "x": 6 },
+            "_rootRot": { "x": -90 },
+            "_root": { "y": -85, "z": -39 },
+            "_fist": 0.15
           }
         },
         {
           "f": 45,
           "pose": {
             "Hips": { "x": 0, "y": 0 },
-            "Spine": { "x": -4, "y": 0 },
-            "Spine1": { "x": -2, "y": 0 },
+            "Spine": { "x": -2, "y": 0 },
+            "Spine1": { "x": 0, "y": 0 },
             "Spine2": { "x": 0, "y": 0 },
-            "Neck": { "x": 16, "y": 0 },
-            "Head": { "x": 10, "y": 0 },
+            "Neck": { "x": 16, "y": -6 },
+            "Head": { "x": 10, "y": -8 },
             "LeftShoulder": { "z": 0 },
-            "LeftArm": { "x": -8, "y": -4, "z": -28 },
-            "LeftForeArm": { "y": -18 },
+            "LeftArm": { "x": -6, "y": -2, "z": -20 },
+            "LeftForeArm": { "y": -14 },
             "LeftHand": { "x": 0 },
             "RightShoulder": { "z": 0 },
-            "RightArm": { "x": -8, "y": 6, "z": 30 },
-            "RightForeArm": { "y": 22 },
+            "RightArm": { "x": -6, "y": 4, "z": 22 },
+            "RightForeArm": { "y": 16 },
             "RightHand": { "x": 0 },
-            "LeftUpLeg": { "x": -8, "z": 14 },
+            "LeftUpLeg": { "x": -8, "z": 18 },
             "LeftLeg": { "x": 16 },
-            "RightUpLeg": { "x": -6, "z": -12 },
+            "RightUpLeg": { "x": -6, "z": -16 },
             "RightLeg": { "x": 12 },
-            "LeftFoot": { "x": 6 },
-            "RightFoot": { "x": 6 },
-            "_rootRot": { "x": -88 },
-            "_root": { "y": -87, "z": -38 }
+            "LeftFoot": { "x": 4 },
+            "RightFoot": { "x": 4 },
+            "_rootRot": { "x": -90 },
+            "_root": { "y": -86, "z": -40 },
+            "_fist": 0.1
           }
         }
       ]
