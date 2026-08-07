@@ -3,10 +3,12 @@
 anthropic>=0.120
 websockets>=15
 
-# Evaluation harness only (agents/harness/). Not needed to run the reference agent.
-litellm>=1.95          # one client for every provider, via OpenRouter
+# The OpenRouter fight app (agents/openrouter_app/). Not needed for the reference agent.
+httpx>=0.28            # the chat-completions call, and the harness's REST calls
 python-dotenv>=1.0     # reads OPENROUTER_API_KEY from .env (gitignored)
-httpx>=0.28            # REST calls to the platform (create/start/fill_bot/log)
+
+# Evaluation harness only (agents/harness/).
+litellm>=1.95          # one client for every provider, via OpenRouter
 
 # Tests
 pytest>=8

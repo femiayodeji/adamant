@@ -2,6 +2,7 @@
 
 import { apiUrl } from './config';
 import type {
+  AgentRoster,
   BotName,
   Corner,
   CreateMatchResponse,
@@ -79,6 +80,28 @@ export function fillBot(
   body: { corner: Corner; bot: BotName; seed?: number },
 ): Promise<unknown> {
   return request(`/api/matches/${encodeURIComponent(ref)}/fill_bot`, {
+    method: 'POST',
+    headers: { 'X-Host-Token': hostToken },
+    body: JSON.stringify(body),
+  });
+}
+
+/** The LLM roster (spec 8.6). Public, and answers even when the server cannot run
+ *  one — read `available` and `reason` before offering the button. */
+export function getAgents(): Promise<AgentRoster> {
+  return request<AgentRoster>('/api/agents');
+}
+
+/** Fill a corner with a roster fighter (spec 8.6).
+ *
+ *  This starts spending the *server's* OpenRouter credit: one model call per tick
+ *  until the match ends. It is a host-only action for that reason. */
+export function fillAgent(
+  ref: string,
+  hostToken: string,
+  body: { corner: Corner; agent: string; model?: string },
+): Promise<{ corner: Corner; agent: string; model: string }> {
+  return request(`/api/matches/${encodeURIComponent(ref)}/fill_agent`, {
     method: 'POST',
     headers: { 'X-Host-Token': hostToken },
     body: JSON.stringify(body),

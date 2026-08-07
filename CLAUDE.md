@@ -20,12 +20,15 @@ A venv lives at `.venv`. Install with `.venv/bin/pip install -e ".[dev]"`.
 | Look at a clip, no browser | `cd frontend && python3 tools/pose_render.py ko jab` → PNG contact sheets in `tools/preview/` (`--view front`, `--trace` for per-frame heights) |
 | Reference agent | `.venv/bin/python agents/reference_agent.py --code RUMBLE-4F2 --url ws://localhost:8000` |
 | …as a chosen persona | add `--persona aggressor \| counter_puncher \| economist \| pattern_reader` |
+| OpenRouter fight app roster | `.venv/bin/python -m agents.openrouter_app --list` |
+| …one fighter into a match | `… --code RUMBLE-4F2 --agent bulldozer` — **spends OpenRouter credit** |
+| …both corners from one process | `… --code RUMBLE-4F2 --agent bulldozer --agent cipher` |
 | Run in Docker | `docker compose up -d --build` → <http://localhost:8000> |
 | Stop Docker | `docker compose down` (keeps match logs) — `-v` also **deletes them** |
 
 Two bare invocations of the reference agent against the **same match code** deliberately pick *different* personas, so filling both corners by hand gives a real fight rather than a mirror match. `--persona` pins one; `--name` and `--model` still override. The persona is part of `prompt_version` (`ref-v2+aggressor-v1`) so two personas can never aggregate into one row.
 
-`ARENA_LOG_DIR`, `ARENA_CORS_ORIGINS`, and `ARENA_LOG_LEVEL` configure the server. `.env` holds `OPENROUTER_API_KEY` (gitignored) — it serves the evaluation harness, not the reference agent, which uses `ANTHROPIC_API_KEY`.
+`ARENA_LOG_DIR`, `ARENA_CORS_ORIGINS`, and `ARENA_LOG_LEVEL` configure the server. `.env` holds `OPENROUTER_API_KEY` (gitignored) — it serves the evaluation harness, the `agents/openrouter_app` fight app, and the server's own `fill_agent` endpoint. The reference agent is the exception: it is direct-Anthropic and uses `ANTHROPIC_API_KEY`.
 
 Deployment detail, including Render, is in [`docs/deploy.md`](docs/deploy.md). Two constraints there are not tuneable: **one worker, one instance** (the registry is in-memory and tick loops are asyncio tasks in-process), and **`/data/logs` must be a persistent volume** (it is both the evaluation dataset and the crash-recovery substrate).
 
@@ -33,7 +36,7 @@ Deployment detail, including Render, is in [`docs/deploy.md`](docs/deploy.md). T
 
 ## Never spend API budget without asking
 
-The suite stubs every model client, so `pytest` is free to run. Anything that would call Anthropic or OpenRouter for real — the Phase 3.5 questions, the Phase 5 gate, any harness batch — costs the user money and needs their go-ahead first. The Evaluation Design section of the plan puts a serious comparison at ~100 matches and ~12,000 LLM calls; that is not a decision to make on the user's behalf.
+The suite stubs every model client, so `pytest` is free to run. Anything that would call Anthropic or OpenRouter for real — the Phase 3.5 questions, the Phase 5 gate, any harness batch, `python -m agents.openrouter_app` with a code, or `POST /api/matches/{ref}/fill_agent` — costs the user money and needs their go-ahead first. The Evaluation Design section of the plan puts a serious comparison at ~100 matches and ~12,000 LLM calls; that is not a decision to make on the user's behalf.
 
 ## What ADAM Arena is
 
@@ -44,7 +47,7 @@ The unit of evaluation is the **agent** (prompt + model + logic as a bundle), no
 ## Document hierarchy
 
 - **`docs/agent_guide.md` — the front door for agent builders.** The 5-minute path, the rules explained rather than specified, the protocol with real captured payloads, writing an agent in any language, and testing free against the bot ladder. Point friends here; point *implementers* at the spec. It explains and links — it never restates a number that could drift. **`#/build` in the app is the hosted short version** of it (`frontend/src/components/Build.tsx`) for someone without the repo — same two starter clients, action table fetched from `/api/rules`. Change one and check the other.
-- **`docs/arena_spec.md` (v0.6) — the contract.** Protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, frontend views. Friends will build agents against this spec, not against the code. If implementation must deviate, **update the spec in the same commit.** §13 is the live list of settled-vs-open tuning decisions — read it before re-litigating one.
+- **`docs/arena_spec.md` (v0.7) — the contract.** Protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, frontend views. Friends will build agents against this spec, not against the code. If implementation must deviate, **update the spec in the same commit.** §13 is the live list of settled-vs-open tuning decisions — read it before re-litigating one.
 - **`docs/plan.md` (v4)** — what is *not* finished: the three open gates, and the evaluation conventions that make results comparable. Completed build instructions have been removed; the code and the spec are the record.
 - **`docs/skeleton.md`** — rig joint map and clip-authoring conventions, including the fourteen-clip roster. Consumed only by the renderer; orthogonal to rules and protocol.
 - **`agents/SPEC_NOTES.md`, `frontend/SPEC_NOTES.md`** — gaps found building against the spec that are **still open**. Anything since written into the spec has been deleted from them; the spec is the record.
@@ -61,9 +64,11 @@ These are load-bearing across multiple documents; violating one breaks something
 
 **One action is not a strategy.** The same action may be submitted at most **3 times in a row**; the 4th and every further consecutive repeat is **void** — stripped to nothing, defenceless that tick, stamina still paid, **no penalty** (spec §4.6). Spam is punished economically, never punitively, so `penalties` keeps meaning only no-moves and the log can tell "this agent spams" from "this agent went silent". Fighter state carries `last_action` and `repeat_streak` on the wire for this: a rule that depends on the past would otherwise break the stateless-by-design promise that pause/resume relies on. Three ordering facts are load-bearing — the repeat check runs **before** the affordability check (so a void never also reports `exhausted`), a **void still extends the streak** (or the cap is a rate limit, not a cap), and the streak counts what was **submitted**, not what it resolved as.
 
-**Rules as data.** The engine is a generic resolver reading a `BOXING` config table. A future combat type = new table + new clips. Do **not** build a combat-type selector or plugin system — import `BOXING` directly.
+**Rules as data.** The engine is a generic resolver reading the config table in `server/engine/rules.py`. A future combat type = new table + new clips. Do **not** build a combat-type selector or plugin system — import the names from that module directly. (There was once a `BOXING` dict aggregating all of them; nothing imported it, and an unused second copy of every constant is exactly the drift this rule exists to prevent.)
 
-**Bots use the public protocol.** Built-in bots are asyncio tasks connecting through `/ws/join/{code}` like any external agent. No privileged internal path — baselines and contenders must be measured through identical machinery.
+**Bots use the public protocol.** Built-in bots are asyncio tasks connecting through `/ws/join/{code}` like any external agent. No privileged internal path — baselines and contenders must be measured through identical machinery. The LLM fighters the host can drop into a corner (`POST /api/matches/{ref}/fill_agent`, spec §8.6) obey the same rule and share the same socket shell: `server/corner_client.py` is connect-join-answer-stop, and `bots.py` and `llm_agents.py` differ only in what turns a `state_update` into an action.
+
+**The roster is one roster.** `agents/openrouter_app` is the fight app — three fighters, each an OpenRouter model bundled with a persona — and `server/llm_agents.py` *imports* it rather than reimplementing it. A fighter that behaved differently depending on whether the host or its author started it would make every log the platform records suspect, and `/api/agents` serves `roster.describe()` for the same reason `/api/rules` serves `engine.rules`. The import of `agents` from `server` is soft: a missing package disables one lobby button, it never stops the arena booting. LLM corners cost money on every tick, so a missing `OPENROUTER_API_KEY` is a `503` and never a quiet substitution of something free — a corner logged as a model that was really a heuristic poisons the dataset.
 
 **The rules table is served, not restated.** `GET /api/rules` (spec §8.5) assembles the response from `engine.rules` directly, and the in-app builder page (`frontend/src/components/Build.tsx`) renders its action, economy and no-move numbers from that fetch. Nothing in that page's source contains a damage value or a stamina cost — a docs page that hand-copies the table is wrong one balance change from now, and unlike `demo.ts` (the one duplicate we accept) nobody would notice. `test_rematch.py::test_rules_endpoint_serves_the_engine_table_not_a_copy` asserts the endpoint against the module rather than against literals, for the same reason.
 

@@ -44,14 +44,20 @@ def _noop(*_args) -> None:
     pass
 
 
-async def _play(uri, name, profile, decide, session, log):
+async def _play(uri, name, profile, decide, session, log, corner=None):
     """One socket's worth of match. Returns the ``match_end`` payload, or None
     if the socket closed before the match finished."""
     async with connect(uri) as ws:
         if session.get("corner_token"):
             await ws.send(json.dumps({"type": "resume", "corner_token": session["corner_token"]}))
         else:
-            await ws.send(json.dumps({"type": "join", "name": name, "profile": profile}))
+            join = {"type": "join", "name": name, "profile": profile}
+            if corner:
+                # Optional (spec 6.1): honoured when that corner is free, silently
+                # ignored otherwise. Never assume it was granted -- the corner we
+                # actually got is read back from `joined` below.
+                join["corner"] = corner
+            await ws.send(json.dumps(join))
 
         async for raw in ws:
             msg = json.loads(raw)
@@ -122,6 +128,7 @@ async def run_match(
     profile: dict,
     decide,
     *,
+    corner: str | None = None,
     max_reconnects: int = 2,
     reconnect_delay_s: float = 1.0,
     log=_noop,
@@ -129,6 +136,10 @@ async def run_match(
     """Play one match to ``match_end``; return that payload (or None).
 
     ``decide(state, opponent_name, deadline_ms, max_ticks) -> Decision``.
+
+    ``corner`` optionally asks for ``agent_a`` or ``agent_b``; it is a request,
+    not a claim (spec 6.1). Filling both corners from one process is the reason
+    it is here -- without it the two clients race for whichever slot is free.
 
     A dropped socket is infrastructure failure, not a lost fight: the platform
     pauses the match and waits, so we reconnect and reclaim the corner with the
@@ -142,7 +153,7 @@ async def run_match(
 
     for attempt in range(max_reconnects + 1):
         try:
-            end = await _play(uri, name, profile, decide, session, log)
+            end = await _play(uri, name, profile, decide, session, log, corner)
         except (ConnectionClosed, OSError) as exc:
             log(f"connection lost: {exc!r}")
             end = None

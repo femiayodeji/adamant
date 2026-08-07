@@ -46,6 +46,11 @@ Render builds the `Dockerfile` directly. The pieces that matter:
 - **Health check path** — `/api/health`, which returns `{"status": "ok", ...}`.
 - **Disk** — mount one at `/data/logs`. `ARENA_LOG_DIR` already points there.
 - **Instance count** — one. See requirement 1 above.
+- **`OPENROUTER_API_KEY`** — optional, and a **secret**: set it in the dashboard, never
+  in the blueprint. It is the one setting that costs money — with it, any host of a
+  match on your instance can spend your credit through **Add LLM agent** (spec §8.6),
+  one model call per LLM corner per tick. Without it `/api/agents` reports
+  `available: false`, the button is disabled, and everything else works unchanged.
 
 Three Render specifics worth knowing before you pick a plan:
 

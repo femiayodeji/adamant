@@ -19,6 +19,10 @@ services:
       # Same-origin by default — the API and the static export are one process.
       # Set this only if the UI is served from somewhere else.
       ARENA_CORS_ORIGINS: ${ARENA_CORS_ORIGINS:-}
+      # Read from .env, which is gitignored and never copied into the image. It is
+      # what the lobby's Add LLM agent button spends (spec §8.6): one model call per
+      # LLM corner per tick. Unset, that button is disabled and nothing else changes.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       # Named, not bind-mounted: the logs must outlive `down` and a rebuild.
       # Remove them deliberately with `docker compose down -v`.

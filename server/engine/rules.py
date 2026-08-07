@@ -1,9 +1,9 @@
-"""The BOXING rules table.
+"""The boxing rules table.
 
 Rules are data (plan.md Principle 2). The resolver is a generic engine that reads
-this table; a future combat type is a new table plus new clips, with zero engine
+this module; a future combat type is a new table plus new clips, with zero engine
 changes. There is deliberately no combat-type selector or plugin system — callers
-import BOXING directly.
+import the names they need from here directly.
 
 Every number here is mirrored in arena_spec.md §2, §3, §5 and §13. If one changes,
 the spec changes in the same commit.
@@ -78,21 +78,6 @@ DEFAULT_RESUME_WINDOW_MS = 120_000
 
 MAX_TICKS_RANGE = (1, 200)
 DEADLINE_MS_RANGE = (500, 120_000)
-
-BOXING: dict[str, Any] = {
-    "attacks": ATTACKS,
-    "defenses": DEFENSES,
-    "idle": IDLE,
-    "actions": ACTIONS,
-    "start_hp": START_HP,
-    "start_stamina": START_STAMINA,
-    "stamina_cap": STAMINA_CAP,
-    "passive_regen": PASSIVE_REGEN,
-    "idle_regen_bonus": IDLE_REGEN_BONUS,
-    "no_move_penalty": NO_MOVE_PENALTY,
-    "max_consecutive_repeats": MAX_CONSECUTIVE_REPEATS,
-}
-
 
 def is_attack(action: str) -> bool:
     return action in ATTACKS

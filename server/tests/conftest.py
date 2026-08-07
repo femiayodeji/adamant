@@ -66,6 +66,14 @@ class Arena:
                 headers={"X-Host-Token": host_token},
             )
 
+    async def fill_agent(self, ref: str, host_token: str, **body: Any) -> httpx.Response:
+        async with self.client() as http:
+            return await http.post(
+                f"/api/matches/{ref}/fill_agent",
+                json=body,
+                headers={"X-Host-Token": host_token},
+            )
+
     async def get(self, path: str) -> httpx.Response:
         async with self.client() as http:
             return await http.get(path)

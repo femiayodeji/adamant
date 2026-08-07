@@ -18,7 +18,7 @@ from fastapi import Body, FastAPI, Header, HTTPException, Request, WebSocket, We
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import bots, matchlog, protocol
+from . import bots, corner_client, llm_agents, matchlog, protocol
 from .engine import rules
 from .engine.resolver import CORNERS
 from .engine.strategies import LADDER, CycleBot
@@ -53,7 +53,9 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await registry.stop_sweeper()
-        await bots.shutdown()
+        # Ladder bots and roster fighters are tasks in one registry — a fighter
+        # left running past shutdown would keep calling a model nobody is watching.
+        await corner_client.shutdown()
 
 
 app = FastAPI(title="ADAM Arena", version="0.1.0", lifespan=lifespan)
@@ -115,7 +117,7 @@ async def create_match(body: dict[str, Any] = Body(default={})):
 
 @app.get("/api/rules")
 async def get_rules():
-    """The BOXING table, as data (spec §8.5).
+    """The boxing rules table, as data (spec §8.5).
 
     It exists so that nothing outside this repo has to hand-copy a damage number.
     The in-app agent-builder page renders its action table straight from this
@@ -261,8 +263,80 @@ async def fill_bot(
     taken = await bots.spawn(
         url=_ws_base(request), code=match.match_code, bot=bot, seed=seed, corner=corner, **options
     )
-    match.bot_fills[taken] = {"bot": bot, "seed": seed, **options}
+    # `kind` is what rematch dispatches on: the two fillers take different keyword
+    # arguments, and a fill dict that cannot say which one made it is unreplayable.
+    match.bot_fills[taken] = {"kind": "bot", "bot": bot, "seed": seed, **options}
     return {"corner": taken, "bot": bot, "seed": seed, **options}
+
+
+@app.get("/api/agents")
+async def get_agents():
+    """The LLM roster the host can drop into a corner (spec §8.6).
+
+    Public and unauthenticated, like `/api/rules`, and served whether or not the
+    server can actually run one: the lobby shows the roster either way and uses
+    `available`/`reason` to explain why the button is disabled. Advertising an
+    empty list when the key is missing would look like the feature does not exist.
+    """
+    available, reason = llm_agents.availability()
+    return {
+        "available": available,
+        "reason": reason,
+        "provider": "openrouter",
+        "agents": llm_agents.roster(),
+    }
+
+
+@app.post("/api/matches/{ref}/fill_agent")
+async def fill_agent(
+    ref: str,
+    request: Request,
+    body: dict[str, Any] = Body(default={}),
+    x_host_token: Optional[str] = Header(default=None),
+):
+    """Fill a corner with an LLM fighter from the roster (spec §8.6).
+
+    The same three agents `python -m agents.openrouter_app` runs, started by the
+    platform instead of by their author, over the same public protocol.
+
+    **This spends the host's OpenRouter credit** — one model call per tick, for as
+    long as the match runs. With no key configured the call is a `503` rather than
+    a quiet downgrade to something free: a corner that says "GPT" in the log and
+    was in fact a heuristic would poison the dataset.
+    """
+    match = _require_match(ref)
+    _require_host(match, x_host_token)
+
+    corner = body.get("corner")
+    agent = body.get("agent")
+    model = body.get("model")
+
+    if corner not in CORNERS:
+        raise HTTPException(status_code=422, detail=f"corner must be one of {list(CORNERS)}")
+
+    available, reason = llm_agents.availability()
+    if not available:
+        raise HTTPException(status_code=503, detail=reason)
+
+    known = {entry["key"]: entry for entry in llm_agents.roster()}
+    if agent not in known:
+        raise HTTPException(status_code=422, detail=f"agent must be one of {sorted(known)}")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise HTTPException(status_code=422, detail="model must be a non-empty OpenRouter model id")
+    if match.status != LOBBY:
+        raise HTTPException(status_code=409, detail=f"match is {match.status}")
+    if match.corners[corner] is not None:
+        raise HTTPException(status_code=409, detail=f"{corner} is already filled")
+
+    taken = await llm_agents.spawn(
+        url=_ws_base(request),
+        code=match.match_code,
+        agent=agent,
+        corner=corner,
+        model=model,
+    )
+    match.bot_fills[taken] = {"kind": "llm", "agent": agent, "model": model}
+    return {"corner": taken, "agent": agent, "model": model or known[agent]["model"]}
 
 
 @app.post("/api/matches/{ref}/rematch")
@@ -280,9 +354,10 @@ async def rematch(
     evaluation dataset lie. So the host gets a fresh code, and the pair fight again
     under the same conditions with two comparable logs.
 
-    Built-in bots are re-spawned into the corners they held. A human-run agent has
-    to dial the new code, which is why the response carries it and the frontend
-    walks the host straight into the new lobby.
+    Every corner the platform filled itself — a ladder bot or a roster fighter — is
+    re-spawned into the corner it held; each entry of `bots` says which with `kind`.
+    A human-run agent has to dial the new code, which is why the response carries it
+    and the frontend walks the host straight into the new lobby.
     """
     source = _require_match(ref)
     _require_host(source, x_host_token)
@@ -295,14 +370,18 @@ async def rematch(
 
     refilled: list[dict[str, Any]] = []
     for corner, fill in source.bot_fills.items():
+        args = {key: value for key, value in fill.items() if key != "kind"}
+        # An LLM corner comes back as an LLM corner, and starts spending again. The
+        # host asked for the same fight under the same conditions, and substituting
+        # a free bot for the fighter that was there would answer a question nobody
+        # asked and put a result under the wrong name.
+        spawn = llm_agents.spawn if fill.get("kind") == "llm" else bots.spawn
         try:
-            taken = await bots.spawn(
-                url=_ws_base(request), code=match.match_code, corner=corner, **fill
-            )
+            taken = await spawn(url=_ws_base(request), code=match.match_code, corner=corner, **args)
         except Exception:
-            # One bot failing to come back must not cost the host the new match —
-            # the corner is simply left open and can be refilled from the lobby.
-            logger.exception("rematch could not refill %s with %s", corner, fill.get("bot"))
+            # One corner failing to come back must not cost the host the new match —
+            # it is simply left open and can be refilled from the lobby.
+            logger.exception("rematch could not refill %s with %s", corner, args)
             continue
         match.bot_fills[taken] = fill
         refilled.append({"corner": taken, **fill})

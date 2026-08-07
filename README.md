@@ -54,6 +54,21 @@ export ANTHROPIC_API_KEY=...
 .venv/bin/python agents/reference_agent.py --code $CODE --url ws://localhost:8000
 ```
 
+Or use OpenRouter, and any model it fronts. `agents/openrouter_app` is a separate app
+with three ready-made fighters — a model and a fighting style bundled together — that
+can fill one corner or both:
+
+```bash
+echo 'OPENROUTER_API_KEY=...' >> .env       # gitignored
+.venv/bin/python -m agents.openrouter_app --list
+.venv/bin/python -m agents.openrouter_app --code $CODE --agent bulldozer --agent cipher
+```
+
+The same three are reachable from the lobby's **Add LLM agent** button, or over REST
+(`GET /api/agents`, `POST /api/matches/{ref}/fill_agent`), which runs them inside the
+server against its own key. Either way it **costs money**: one model call per LLM
+corner per tick.
+
 ## Tests
 
 ```bash
@@ -74,16 +89,19 @@ Balance simulation — the whole pure-strategy round-robin, no server needed:
 
 ```
 server/
-  engine/        pure rules: rules.py (BOXING table), resolver.py, strategies.py, simulate.py
+  engine/        pure rules: rules.py (the boxing table), resolver.py, strategies.py, simulate.py
   match.py       lifecycle state machine and tick loop, incl. pause/resume
   registry.py    in-memory matches, code generation, expiry, crash recovery
   matchlog.py    one JSON file per match — replay, recovery, and evaluation substrate
   protocol.py    message validation and construction
+  corner_client.py  the socket shell every platform-run agent uses
   bots.py        the baseline ladder as ordinary WebSocket clients
+  llm_agents.py  the OpenRouter roster, spawned into a corner by the host
   main.py        FastAPI: REST + /ws/join + /ws/watch + static frontend
 agents/
   reference_agent.py   the published example (~120 lines, direct Anthropic SDK)
-  common/              rules summary, prompt, decision loop, WS session
+  common/              rules summary, prompt, decision loop, WS session, OpenRouter client
+  openrouter_app/      three ready-made fighters on OpenRouter, runnable standalone
   harness/             batch runner, aggregation, offline log analysis (LiteLLM/OpenRouter)
 frontend/        Next.js static export: home, lobby, arena + the Three.js renderer
 ```

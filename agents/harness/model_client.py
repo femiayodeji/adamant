@@ -7,33 +7,21 @@ row, and never included in a profile.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from ..common.decision import budget_seconds
+from ..common.openrouter import load_api_key
 from ..common.personas import get_persona, prompt_version
 from ..common.prompt import build_system_prompt
 
 HARNESS_VERSION = "harness@1.0.0"
 OPENROUTER_PREFIX = "openrouter/"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
-
-def load_api_key(env_path: Path | None = None) -> str:
-    """Read ``OPENROUTER_API_KEY`` from the environment or from ``.env``."""
-    key = os.environ.get("OPENROUTER_API_KEY")
-    if not key:
-        try:
-            from dotenv import load_dotenv
-        except ImportError as exc:  # pragma: no cover - dependency is declared
-            raise RuntimeError("python-dotenv is required to read .env") from exc
-        load_dotenv(env_path or (REPO_ROOT / ".env"))
-        key = os.environ.get("OPENROUTER_API_KEY")
-    if not key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set (put it in .env)")
-    return key
+# One reader of the key, in ``common``, shared with the httpx client the fight app
+# and the platform use. Re-exported because this is where it has always been
+# imported from.
+__all__ = ["HARNESS_VERSION", "LiteLLMClient", "ModelSpec", "load_api_key"]
 
 
 @dataclass(frozen=True)

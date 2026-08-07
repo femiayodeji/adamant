@@ -5,11 +5,18 @@
  * socket, so the host and every spectator see the same thing at the same time.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { ApiError, fillBot, startMatch } from '@/lib/api';
+import { ApiError, fillAgent, fillBot, getAgents, startMatch } from '@/lib/api';
 import { joinCommand, watchLink } from '@/lib/config';
-import { BOTS, BOT_BLURBS, type BotName, type Corner, type CornerInfo } from '@/lib/types';
+import {
+  BOTS,
+  BOT_BLURBS,
+  type AgentRoster,
+  type BotName,
+  type Corner,
+  type CornerInfo,
+} from '@/lib/types';
 import type { MatchView } from '@/lib/useMatchFeed';
 import { CopyButton, ProfileChips } from './bits';
 
@@ -23,21 +30,41 @@ interface LobbyProps {
 export function Lobby({ code, view, hostToken, demo }: LobbyProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [roster, setRoster] = useState<AgentRoster | null>(null);
   const isHost = Boolean(hostToken);
   const bothFilled = Boolean(view.corners.agent_a && view.corners.agent_b);
 
-  async function addBot(corner: Corner, bot: BotName) {
+  // Only the host can act on it, but it is fetched for everyone: it is public, it
+  // is one request, and a spectator seeing which fighters are on offer costs
+  // nothing. A server without the roster simply leaves this null.
+  useEffect(() => {
+    let live = true;
+    getAgents()
+      .then((data) => live && setRoster(data))
+      .catch(() => live && setRoster(null));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  async function fill(corner: Corner, action: () => Promise<unknown>) {
     if (!hostToken) return;
     setBusy(corner);
     setError(null);
     try {
-      await fillBot(code, hostToken, { corner, bot });
+      await action();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setBusy(null);
     }
   }
+
+  const addBot = (corner: Corner, bot: BotName) =>
+    fill(corner, () => fillBot(code, hostToken!, { corner, bot }));
+
+  const addAgent = (corner: Corner, agent: string) =>
+    fill(corner, () => fillAgent(code, hostToken!, { corner, agent }));
 
   async function start() {
     if (!hostToken) return;
@@ -85,7 +112,9 @@ export function Lobby({ code, view, hostToken, demo }: LobbyProps) {
             info={view.corners[corner]}
             isHost={isHost}
             disabled={demo || busy !== null}
+            roster={roster}
             onAddBot={(bot) => addBot(corner, bot)}
+            onAddAgent={(agent) => addAgent(corner, agent)}
           />
         ))}
       </div>
@@ -118,16 +147,23 @@ function CornerCard({
   info,
   isHost,
   disabled,
+  roster,
   onAddBot,
+  onAddAgent,
 }: {
   corner: Corner;
   info: CornerInfo | null;
   isHost: boolean;
   disabled: boolean;
+  roster: AgentRoster | null;
   onAddBot: (bot: BotName) => void;
+  onAddAgent: (agent: string) => void;
 }) {
   const [bot, setBot] = useState<BotName>('jab');
+  const [agent, setAgent] = useState<string>('');
   const side = corner === 'agent_a' ? 'a' : 'b';
+  const fighters = roster?.agents ?? [];
+  const chosen = fighters.find((entry) => entry.key === agent) ?? fighters[0];
 
   return (
     <div className={`corner ${side}`}>
@@ -166,6 +202,40 @@ function CornerCard({
                 </button>
               </div>
               <small className="hint">{BOT_BLURBS[bot]}</small>
+
+              {chosen && (
+                <>
+                  <div className="row">
+                    <select
+                      value={chosen.key}
+                      onChange={(e) => setAgent(e.target.value)}
+                      style={{ flex: 1 }}
+                    >
+                      {fighters.map((entry) => (
+                        <option key={entry.key} value={entry.key}>
+                          {entry.name} — {entry.model}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={disabled || !roster?.available}
+                      onClick={() => onAddAgent(chosen.key)}
+                      title={
+                        roster?.available
+                          ? 'Spends the server’s OpenRouter credit: one model call per tick'
+                          : (roster?.reason ?? 'Unavailable')
+                      }
+                    >
+                      Add LLM agent
+                    </button>
+                  </div>
+                  <small className="hint">
+                    {roster?.available
+                      ? `${chosen.blurb} Costs API credit — one call per tick.`
+                      : (roster?.reason ?? 'LLM agents are unavailable on this server.')}
+                  </small>
+                </>
+              )}
             </div>
           )}
         </>

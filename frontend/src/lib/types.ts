@@ -198,10 +198,40 @@ export interface CreateMatchResponse {
 export interface RematchResponse extends CreateMatchResponse {
   config: MatchConfig;
   rematch_of: string;
-  bots: { corner: Corner; bot: string; seed?: number | null; period?: number }[];
+  /** Every corner the platform refilled itself. `kind` says which filler made it:
+   *  a ladder bot carries `bot`, a roster fighter carries `agent`. */
+  bots: {
+    corner: Corner;
+    kind?: 'bot' | 'llm';
+    bot?: string;
+    seed?: number | null;
+    period?: number;
+    agent?: string;
+    model?: string | null;
+  }[];
 }
 
-/** GET /api/rules (spec 8.5) — the BOXING table, served from the same module the
+/** One entry of GET /api/agents (spec 8.6) — an LLM fighter the host can drop into
+ *  a corner. The same roster `python -m agents.openrouter_app` runs. */
+export interface LlmAgent {
+  key: string;
+  name: string;
+  model: string;
+  persona: string;
+  blurb: string;
+}
+
+/** GET /api/agents (spec 8.6). `available` is false when the server has no
+ *  OPENROUTER_API_KEY; the roster is still listed so the lobby can show what it
+ *  would offer and say what is missing. */
+export interface AgentRoster {
+  available: boolean;
+  reason: string | null;
+  provider: string;
+  agents: LlmAgent[];
+}
+
+/** GET /api/rules (spec 8.5) — the boxing rules table, served from the module the
  *  resolver reads. The agent-builder page renders from this rather than restating
  *  numbers that would drift the first time the table is retuned. */
 export interface Rules {

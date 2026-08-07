@@ -32,3 +32,10 @@ services:
       # Only needed if the UI is ever served from a different origin than the API.
       # - key: ARENA_CORS_ORIGINS
       #   value: https://arena.example.com
+      #
+      # Optional, and the only setting that costs money: with a key present, any host
+      # of a match on this instance can spend your OpenRouter credit through the
+      # lobby's Add LLM agent button (spec §8.6). Set it in the dashboard as a secret,
+      # never here. Without it that button is disabled and nothing else changes.
+      # - key: OPENROUTER_API_KEY
+      #   sync: false

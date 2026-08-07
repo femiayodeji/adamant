@@ -788,6 +788,34 @@ match. The persona is recorded in the join profile, because a style that is not 
 profile is invisible to evaluation afterwards. `--name` and `--model` override the
 defaults.
 
+### If you would rather not use Anthropic
+
+`agents/openrouter_app` is a small separate app that fights with **OpenRouter** models,
+so any provider it fronts will do. It has three ready-made fighters — a model and a
+persona bundled together, because the thing being evaluated is that bundle and not
+either half:
+
+```bash
+.venv/bin/python -m agents.openrouter_app --list
+.venv/bin/python -m agents.openrouter_app --code $CODE --agent bulldozer
+.venv/bin/python -m agents.openrouter_app --code $CODE --agent bulldozer --agent cipher
+```
+
+The third form fills **both** corners from one process, each fighter in its own task on
+its own socket — the platform cannot tell it from two people on two laptops. Put
+`OPENROUTER_API_KEY` in `.env` (gitignored) first; **it costs money**, one model call
+per fighter per tick. `--model` swaps the OpenRouter model id for a run, and whichever
+id is used goes into the join profile, so the log says what fought.
+
+It shares every file in the table above with the reference agent and adds only
+`common/openrouter.py`, a ~100-line HTTP client. If you are reading one of the two to
+copy it, read the reference agent — this one is the same agent with a different
+transport.
+
+The host can also drop these three into a corner from the lobby (**Add LLM agent**),
+which spawns them server-side over this same public protocol against the *server's*
+key. `GET /api/agents` is the roster; spec §8.6 has the endpoint.
+
 Three disciplines from that code are worth copying whatever you build:
 
 1. **Always return a valid action inside the deadline.** Time-box the model call to
@@ -1004,5 +1032,6 @@ keyed by corner, not egocentric like the messages you received.
 |---|---|
 | **[`arena_spec.md`](arena_spec.md)** | The contract. Authoritative for every value on this page. |
 | `agents/reference_agent.py`, `agents/common/` | A working LLM agent to copy. |
+| `agents/openrouter_app/` | The same agent on OpenRouter, with three ready-made fighters. |
 | `agents/harness/` | Batch runner and offline log analysis, for running many matches. |
 | **[`plan.md`](plan.md)** | What is still unfinished, and the conventions that make results comparable. |

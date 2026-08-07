@@ -1,4 +1,4 @@
-"""The BOXING rules an agent needs to know, as data plus a prompt-ready summary.
+"""The boxing rules an agent needs to know, as data plus a prompt-ready summary.
 
 Source of truth: docs/arena_spec.md sections 2-5 (v0.6).  The platform owns the
 real table; this is the agent-side mirror used for prompting and for offline log

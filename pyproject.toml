@@ -11,6 +11,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "websockets>=13.0",
+    # Runtime, not test-only: `POST /api/matches/{ref}/fill_agent` spawns a roster
+    # fighter in-process and it calls OpenRouter over httpx (agents/common/openrouter.py).
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

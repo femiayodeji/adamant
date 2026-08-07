@@ -1,4 +1,4 @@
-# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.6)
+# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.7)
 
 A hosted platform where two LLM agents fight under boxing-style rules. The platform owns the rig, animations, rules engine, and referee logic. Agents own only their decision-making (model + prompt + logic).
 
@@ -541,10 +541,12 @@ Renderers therefore cannot read `moves` alone. A `null` has no clip. A voided ac
 | `POST /api/matches` | Creates a match. Optional body `{"max_ticks": 60, "deadline_ms": 5000}`. Returns `{match_id, match_code, host_token, watch_url, config}` |
 | `POST /api/matches/{ref}/start` | Host starts the fight. Rejected unless both corners are filled. |
 | `POST /api/matches/{ref}/fill_bot` | Body: `{corner, bot: "jab" \| "random" \| "cycle" \| "frequency" \| "mixer", seed?: int, period?: 3 \| 5}`. Spawns a built-in bot (§11) as an internal client in that corner. `period` applies to `cycle` only (default 3); supplying it for any other bot, or with a value other than 3 or 5, is a `422`. |
-| `POST /api/matches/{ref}/rematch` | Host runs it back. Creates a **new** match with the same config and re-fills any built-in bots into the corners they held. Returns `{match_id, match_code, host_token, watch_url, config, rematch_of, bots}`. Rejected with `409` unless the source match is `finished` or `abandoned`. |
+| `POST /api/matches/{ref}/fill_agent` | Body: `{corner, agent, model?}`. Spawns one of the LLM fighters of §8.6 in that corner. `503` when the server has no `OPENROUTER_API_KEY`. |
+| `POST /api/matches/{ref}/rematch` | Host runs it back. Creates a **new** match with the same config and re-fills every corner the platform filled itself — bots and LLM fighters alike — into the corners they held. Returns `{match_id, match_code, host_token, watch_url, config, rematch_of, bots}`. Rejected with `409` unless the source match is `finished` or `abandoned`. |
 | `GET /api/matches/{ref}` | Status: `lobby \| in_progress \| paused \| finished \| abandoned` + corners (with profiles) + result if finished |
 | `GET /api/matches/{ref}/log` | Full match log JSON (used for replay) |
 | `GET /api/rules` | The rules table as data (§8.5). No authentication — it is public reference for agent builders. |
+| `GET /api/agents` | The LLM roster as data (§8.6). Public. |
 
 ### 8.1 Match references
 
@@ -556,7 +558,7 @@ This matters: spectators arrive holding only a match code from a share link, whi
 
 ### 8.2 Host authentication
 
-Host-only actions (`start`, `fill_bot`, `rematch`) require the header:
+Host-only actions (`start`, `fill_bot`, `fill_agent`, `rematch`) require the header:
 
 ```
 X-Host-Token: <host_token>
@@ -585,11 +587,11 @@ Defaults: `max_ticks: 60`, `deadline_ms: 5000`, `resume_window_ms: 120000`. Acce
 
 A rematch is a **new match with a new code**, not a reset of the old one. One log is one fight: rewinding a finished match in place would either overwrite a result or leave two fights sharing a `match_id`, and either makes the evaluation dataset lie. Two rematches are therefore two comparable logs fought under identical config.
 
-Built-in bots are re-spawned into the corners they held, with the same `bot`, `seed` and `period`, so a ladder run is one click. An externally-run agent must dial the new code — the response carries it, and the host's browser moves straight into the new lobby. A bot that fails to come back leaves its corner open rather than failing the whole call.
+Built-in bots are re-spawned into the corners they held, with the same `bot`, `seed` and `period`, so a ladder run is one click; an LLM corner (§8.6) comes back as the same fighter on the same model, and **starts spending again**. Each entry of `bots` carries a `kind` (`"bot"` or `"llm"`) saying which filler produced it. An externally-run agent must dial the new code — the response carries it, and the host's browser moves straight into the new lobby. A bot that fails to come back leaves its corner open rather than failing the whole call.
 
 ### 8.5 Rules as data
 
-`GET /api/rules` serves the `BOXING` table (§2, §3, §4.4, §4.6) assembled from the same module the resolver reads, plus the configuration defaults of §8.3 and the ladder of §11:
+`GET /api/rules` serves the boxing rules table (§2, §3, §4.4, §4.6) assembled from the same module the resolver reads, plus the configuration defaults of §8.3 and the ladder of §11:
 
 ```json
 {
@@ -608,6 +610,45 @@ Built-in bots are re-spawned into the corners they held, with the same `bot`, `s
 
 It exists so nothing outside this repo has to hand-copy a damage number. The in-app agent-builder page (§9) renders its action table from this response rather than restating it, and an agent that reads its costs from here survives a balance change instead of silently playing the old game.
 
+### 8.6 LLM fighters as data
+
+The bot ladder (§11) is the measuring instrument; model-vs-model play is the demo. `GET /api/agents` and `POST /api/matches/{ref}/fill_agent` make the demo reachable from the lobby, without the host needing a terminal or an API key of their own.
+
+The roster is the three fighters of `agents/openrouter_app`, each an OpenRouter model paired with one of the personas in `agents/common/personas.py` — the agent is the *bundle* (prompt + model + logic), so a fighter is one point in that space rather than a model to be configured at the call site.
+
+```json
+{
+  "available": true,
+  "reason": null,
+  "provider": "openrouter",
+  "agents": [
+    {"key": "bulldozer", "name": "Bulldozer", "model": "anthropic/claude-haiku-4.5", "persona": "aggressor", "blurb": "…"},
+    {"key": "ricochet", "…": {}},
+    {"key": "cipher", "…": {}}
+  ]
+}
+```
+
+`GET /api/agents` is public and always answers. When the server has no `OPENROUTER_API_KEY` it still lists the roster, with `available: false` and a `reason` — an empty list would read as "this platform has no LLM agents", which is a different and untrue statement, and the lobby needs something to explain the disabled button with.
+
+`POST /api/matches/{ref}/fill_agent` takes `{corner, agent, model?}`, where `model` overrides the fighter's default OpenRouter id for that one match. Status codes, in the order checked:
+
+| Condition | Status |
+|---|---|
+| Unknown match / bad or missing host token | `404` / `401` (§8.2) |
+| `corner` not `agent_a` or `agent_b` | `422` |
+| No key configured on the server | `503` |
+| `agent` not in the roster, or `model` not a non-empty string | `422` |
+| Match not in `lobby`, or that corner already filled | `409` |
+| Success | `200` — `{corner, agent, model}` |
+
+Two properties are load-bearing:
+
+- **The fighter is an ordinary client.** It dials `/ws/join/{code}` and speaks §6 exactly as a guest agent does, with no privileged internal path — the same rule as the built-in bots (§11). Nothing in the match, the log or the resolver can tell who started it. The profile it declares names the model, the persona and the prompt version, so the log says what fought.
+- **It spends money, visibly.** One model call per LLM corner per tick, against the *server's* key. Hence the `503` rather than a silent downgrade to something free: a corner recorded in the log as a model, that was in fact a heuristic, would poison the evaluation dataset. The lobby says the cost before the button is pressed.
+
+A model that ignores the output contract, times out, or hits a provider outage is a **hedge**, not a lost corner: the decision loop falls back to a defensive action and marks the move `fallback` (§10). The socket stays open, so none of that is mistaken for infrastructure failure.
+
 ---
 
 ## 9. Frontend (single-page app)
@@ -615,7 +656,7 @@ It exists so nothing outside this repo has to hand-copy a damage number. The in-
 Four views, one page. Simple, clean, effective — no navigation maze.
 
 1. **Home:** one primary button — **Create Match** — plus a "Watch a match" code input and a link to **Build an agent**.
-2. **Lobby** (after create): the match code displayed large with a copy button and the join command shown ready to paste (`python agent.py --code RUMBLE-4F2 --url wss://…`); two corner cards that flip from *Waiting…* to the agent's name **and profile** (model, prompt version) on connect; **Add built-in bot** button on each empty corner; **Start Fight** enabled only when both corners are filled. Share link for spectators.
+2. **Lobby** (after create): the match code displayed large with a copy button and the join command shown ready to paste (`python agent.py --code RUMBLE-4F2 --url wss://…`); two corner cards that flip from *Waiting…* to the agent's name **and profile** (model, prompt version) on connect; **Add built-in bot** and **Add LLM agent** (§8.6) on each empty corner, the second labelled with the fighter's model and the cost of running it; **Start Fight** enabled only when both corners are filled. Share link for spectators.
 3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, tick counter, and each fighter's **repeat streak** (§4.6) so a watcher can see the cap coming and read a void when it lands; a **sound** toggle on the canvas; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason, **Replay**, and **Rematch** for the host (§8.4); the **event log** beside the canvas; and a replay transport with a video export.
 4. **Build an agent** (`#/build`): the protocol, the action table, and copy-paste starters, for someone writing a client against §6 without the repo in front of them. Reached from Home. Its action, economy and no-move numbers are rendered from `GET /api/rules` (§8.5), never restated.
 
