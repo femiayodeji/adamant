@@ -289,9 +289,26 @@ export class Fighter {
     action.play();
   }
 
+  /**
+   * Fade out everything the mixer is still evaluating except `keep`.
+   *
+   * The test is deliberately not `isRunning()`. A LoopOnce action that has
+   * FINISHED with `clampWhenFinished` is paused, not stopped: three.js leaves it
+   * enabled, active in the mixer, and contributing its last frame at full weight
+   * — and `isRunning()` reports false for exactly that state, so a check on it
+   * skips the one case that needs clearing.
+   *
+   * That is invisible for thirteen of the fourteen clips, because every
+   * non-terminal clip ends at STANCE (docs/skeleton.md) and a stale one is
+   * therefore blending stance into stance. `ko` is the exception — it ends on
+   * the deck — so a knockout thrown over a pile of clamped clips resolved to an
+   * AVERAGE of lying down and standing up: a fighter stopped half-fallen,
+   * hovering above the floor, which reads as a body sinking rather than landing.
+   */
   private fadeOthers(keep: string): void {
     for (const [name, action] of this.actions) {
-      if (name !== keep && action.isRunning()) action.fadeOut(FADE);
+      if (name === keep) continue;
+      if (action.isRunning() || (action.enabled && action.paused)) action.fadeOut(FADE);
     }
   }
 }
