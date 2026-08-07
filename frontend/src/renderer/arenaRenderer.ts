@@ -171,6 +171,23 @@ export class ArenaRenderer {
     this.sound.setEnabled(enabled);
   }
 
+  /**
+   * The match audio as a MediaStream, for the video recorder to marry to the
+   * canvas frames. Call it from the click that starts the recording.
+   *
+   * Independent of the mute toggle on purpose: the toggle is about this tab, and
+   * a replay someone downloads to share should have the fight in it either way.
+   * `null` = no Web Audio here; the caller records video and says so.
+   */
+  captureAudio(): MediaStream | null {
+    return this.sound.capture();
+  }
+
+  /** Release the recording tap. Sound goes back to following the mute toggle. */
+  endAudioCapture(): void {
+    this.sound.endCapture();
+  }
+
   /** Replay transport speed (1 = as fought). Clamped to a range that still animates. */
   setSpeed(speed: number): void {
     this.speed = Math.min(Math.max(speed, 0.1), 8);

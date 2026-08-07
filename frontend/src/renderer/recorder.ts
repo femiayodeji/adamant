@@ -14,6 +14,13 @@
  * of every live match, recorded or not), `drawImage` from an independent rAF loop
  * yields black. `composite()` is therefore called from `ArenaRenderer`'s own frame
  * hook, immediately after `render()`.
+ *
+ * The audio arrives as a MediaStream from `sound.ts` and is added to the canvas
+ * stream as a second track. It is tapped ahead of the mute control, so the file
+ * has the punches in it even when the page was recorded silent — but the tracks
+ * have to be married BEFORE `MediaRecorder.start()`, because a recorder samples
+ * the stream it was constructed with and ignores tracks added afterwards. A
+ * browser with no Web Audio simply records video, as it did before.
  */
 
 /** Paints the scoreboard over one composited frame. */
@@ -36,15 +43,26 @@ export interface VideoFormat {
  * only ever returns WebM. Callers surface `ext` to the user rather than promising
  * an MP4 and writing a WebM into it — a mislabelled file is worse than a labelled
  * fallback. `null` means this browser cannot record at all.
+ *
+ * Sound outranks the container. Every type that can carry audio is tried before
+ * any that cannot, so a browser that encodes H.264 video but will not put AAC
+ * beside it gets a WebM with the fight in it rather than a silent MP4 — which is
+ * not hypothetical: Chromium accepts `video/mp4;codecs=avc1.42E01E` and rejects
+ * the same string with `mp4a.40.2` appended. Naming the audio codec is the only
+ * way to find that out; a bare type is accepted and then quietly drops the track.
+ * The audio-less rows at the end are for a browser that records neither, and for
+ * the case where there is no Web Audio to record.
  */
 export function pickVideoFormat(): VideoFormat | null {
   if (typeof MediaRecorder === 'undefined') return null;
   const candidates: VideoFormat[] = [
+    { mime: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', ext: 'mp4' },
+    { mime: 'video/mp4;codecs=avc1,mp4a.40.2', ext: 'mp4' },
+    { mime: 'video/webm;codecs=vp9,opus', ext: 'webm' },
+    { mime: 'video/webm;codecs=vp8,opus', ext: 'webm' },
     { mime: 'video/mp4;codecs=avc1.42E01E', ext: 'mp4' },
-    { mime: 'video/mp4;codecs=avc1', ext: 'mp4' },
     { mime: 'video/mp4', ext: 'mp4' },
     { mime: 'video/webm;codecs=vp9', ext: 'webm' },
-    { mime: 'video/webm;codecs=vp8', ext: 'webm' },
     { mime: 'video/webm', ext: 'webm' },
   ];
   return candidates.find((c) => MediaRecorder.isTypeSupported(c.mime)) ?? null;
@@ -69,6 +87,8 @@ export class ReplayRecorder {
     private readonly source: HTMLCanvasElement,
     private readonly painter: OverlayPainter,
     format: VideoFormat,
+    /** The match audio, from `Sound.capture()`. `null` records a silent file. */
+    private readonly audio: MediaStream | null = null,
   ) {
     this.format = format;
     const aspect = source.height / Math.max(source.width, 1) || 9 / 16;
@@ -88,6 +108,11 @@ export class ReplayRecorder {
     return this.canvas.height;
   }
 
+  /** Whether the file being written actually has an audio track in it. */
+  get hasAudio(): boolean {
+    return (this.stream?.getAudioTracks().length ?? 0) > 0;
+  }
+
   start(): void {
     // One black frame up front, so a recorder that samples before the first
     // composite never emits an undefined-content frame.
@@ -95,9 +120,12 @@ export class ReplayRecorder {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.stream = this.canvas.captureStream(FPS);
+    // Married before `start()`, never after — see the note at the top of the file.
+    for (const track of this.audio?.getAudioTracks() ?? []) this.stream.addTrack(track);
     this.recorder = new MediaRecorder(this.stream, {
       mimeType: this.format.mime,
       videoBitsPerSecond: 6_000_000,
+      audioBitsPerSecond: 128_000,
     });
     this.recorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.chunks.push(event.data);

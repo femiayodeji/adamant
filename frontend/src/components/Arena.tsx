@@ -364,8 +364,16 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
       setReplayError('This browser cannot record video.');
       return;
     }
+    // Opened here, before anything is awaited: this call still stands inside the
+    // click, which is the gesture a browser wants before it will start an audio
+    // context. The recording carries sound even with the page muted — muting is
+    // about this tab, not about the file (see `sound.ts`).
+    const audio = renderer.captureAudio();
     const log = await loadLog();
-    if (!log) return;
+    if (!log) {
+      renderer.endAudioCapture();
+      return;
+    }
 
     overlay.current = {
       code,
@@ -383,8 +391,10 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
         canvas,
         (ctx, w, h) => overlay.current && paintOverlay(ctx, w, h, overlay.current),
         format,
+        audio,
       );
     } catch (err) {
+      renderer.endAudioCapture();
       setReplayError(String(err));
       return;
     }
@@ -406,8 +416,10 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
       // Hold the end card, then cut. The frame hook stays attached for it.
       window.setTimeout(async () => {
         renderer.setFrameHook(null);
+        const sounded = capture.hasAudio;
         const blob = await capture.stop();
         capture.dispose();
+        renderer.endAudioCapture();
         recorder.current = null;
         overlay.current = null;
         setRecording(null);
@@ -416,10 +428,12 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
           return;
         }
         saveBlob(blob, `${code ?? 'adam-arena'}-replay.${capture.format.ext}`);
+        const size = `Saved ${(blob.size / 1e6).toFixed(1)} MB`;
+        const track = sounded ? ' with sound' : ', silent — this browser has no Web Audio';
         setVideoNote(
           capture.format.ext === 'mp4'
-            ? `Saved ${(blob.size / 1e6).toFixed(1)} MB as MP4.`
-            : `Saved ${(blob.size / 1e6).toFixed(1)} MB as WebM — this browser has no MP4 encoder.`,
+            ? `${size} as MP4${track}.`
+            : `${size} as WebM${track} — MP4 was not on offer in this browser.`,
         );
       }, END_CARD_MS);
     };
@@ -450,6 +464,7 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
       finish.current = null;
       rendererRef.current?.setFrameHook(null);
       recorder.current?.dispose();
+      rendererRef.current?.endAudioCapture();
       recorder.current = null;
       overlay.current = null;
       setRecording(null);

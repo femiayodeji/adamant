@@ -28,6 +28,14 @@
  * clips play, so the queue speeds up under backlog and impacts can arrive in a
  * burst. Past `MAX_VOICES` simultaneous sources new sounds are dropped rather
  * than mixed, which keeps a flurry sounding like a flurry instead of like clipping.
+ *
+ * THE RECORDING IS NOT THE SPEAKERS. `capture()` taps the mix bus into a
+ * MediaStream for the video recorder, and that tap sits BEFORE the speaker gain —
+ * so a downloaded replay carries the fight's audio whether or not the viewer had
+ * the page unmuted while it recorded. Muting is a property of this browser tab,
+ * not of the file. That is also why synthesis is gated on `on || capturing`
+ * rather than on `on` alone: while a capture is running the sounds are built and
+ * mixed as usual, and only the path to the speakers is turned down.
  */
 
 /** Master level. Low: this plays under a fight someone may be talking over. */
@@ -51,7 +59,12 @@ const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
 
 export class Sound {
   private ctx: AudioContext | null = null;
+  /** The mix bus every sound lands on. Both the speakers and the recording tap
+   *  hang off it, which is what lets one be silent while the other is not. */
   private master: GainNode | null = null;
+  /** The path to the speakers, and the only thing muting touches. */
+  private speaker: GainNode | null = null;
+  private tap: MediaStreamAudioDestinationNode | null = null;
   private noise: AudioBuffer | null = null;
   private voices = 0;
   private unlock: (() => void) | null = null;
@@ -78,21 +91,51 @@ export class Sound {
       return;
     }
     const ctx = this.open();
-    if (!ctx || !this.master) return;
-    this.master.gain.setValueAtTime(MASTER_GAIN, ctx.currentTime);
-    void ctx.resume().then(
-      () => {
-        if (ctx.state !== 'running') this.armUnlock(ctx);
-      },
-      () => this.armUnlock(ctx),
-    );
+    if (!ctx || !this.speaker) return;
+    this.speaker.gain.setValueAtTime(1, ctx.currentTime);
+    this.start(ctx);
+  }
+
+  /**
+   * Open an audio path for the video recorder and hand back its stream.
+   *
+   * Expects to be called from the click that starts a recording: that click is
+   * both the gesture the browser needs to start an AudioContext and the moment
+   * the tap has to exist by, since a MediaRecorder samples the tracks it was
+   * handed at `start()` and never picks up one added later.
+   *
+   * `null` means this browser has no Web Audio at all — the caller records a
+   * silent video rather than refusing to record.
+   */
+  capture(): MediaStream | null {
+    const ctx = this.open();
+    if (!ctx || !this.master || typeof ctx.createMediaStreamDestination !== 'function') {
+      return null;
+    }
+    // Always a fresh tap: the recorder stops the tracks it was handed when it
+    // finishes, and a stopped track carries no audio into the next recording.
+    this.endCapture();
+    this.tap = ctx.createMediaStreamDestination();
+    this.master.connect(this.tap);
+    this.start(ctx);
+    return this.tap.stream;
+  }
+
+  /** Close the recorder's tap. Sounds go back to being made only when unmuted. */
+  endCapture(): void {
+    if (!this.tap) return;
+    this.master?.disconnect(this.tap);
+    for (const track of this.tap.stream.getTracks()) track.stop();
+    this.tap = null;
   }
 
   dispose(): void {
     this.disarmUnlock();
+    this.endCapture();
     void this.ctx?.close().catch(() => {});
     this.ctx = null;
     this.master = null;
+    this.speaker = null;
     this.noise = null;
   }
 
@@ -241,12 +284,24 @@ export class Sound {
 
   /* ------------------------------------------------------------- plumbing */
 
-  /** The context, if a sound could actually be heard right now. */
+  /** The context, if a sound could actually be heard *or recorded* right now. */
   private live(): AudioContext | null {
-    if (!this.on || !this.ctx || !this.master) return null;
+    if (!this.on && !this.tap) return null;
+    if (!this.ctx || !this.master) return null;
     if (this.ctx.state !== 'running') return null;
     if (this.voices >= MAX_VOICES) return null;
     return this.ctx;
+  }
+
+  /** Get the context running, and if the browser refuses outside a gesture, arm
+   *  a one-shot listener to try again at the first one the page sees. */
+  private start(ctx: AudioContext): void {
+    void ctx.resume().then(
+      () => {
+        if (ctx.state !== 'running') this.armUnlock(ctx);
+      },
+      () => this.armUnlock(ctx),
+    );
   }
 
   private open(): AudioContext | null {
@@ -261,7 +316,10 @@ export class Sound {
     const ctx = new Ctor();
     const master = ctx.createGain();
     master.gain.value = MASTER_GAIN;
-    master.connect(ctx.destination);
+    const speaker = ctx.createGain();
+    speaker.gain.value = this.on ? 1 : 0;
+    master.connect(speaker);
+    speaker.connect(ctx.destination);
 
     const noise = ctx.createBuffer(1, Math.floor(ctx.sampleRate * NOISE_SECONDS), ctx.sampleRate);
     const channel = noise.getChannelData(0);
@@ -269,15 +327,17 @@ export class Sound {
 
     this.ctx = ctx;
     this.master = master;
+    this.speaker = speaker;
     this.noise = noise;
     return ctx;
   }
 
-  /** Cut the master rather than waiting for tails: turning sound off means now. */
+  /** Cut the speakers rather than waiting for tails: muting means now. A capture
+   *  in flight is unaffected — it is tapped before this gain. */
   private silence(): void {
-    if (!this.ctx || !this.master) return;
-    this.master.gain.cancelScheduledValues(this.ctx.currentTime);
-    this.master.gain.setValueAtTime(0, this.ctx.currentTime);
+    if (!this.ctx || !this.speaker) return;
+    this.speaker.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.speaker.gain.setValueAtTime(0, this.ctx.currentTime);
   }
 
   /**
