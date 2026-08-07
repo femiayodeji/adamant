@@ -15,6 +15,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { CORNER_COLOR, cornerHex } from './corners';
 import { Fighter } from './fighter';
 import { Shake, Sparks } from './fx';
+import { Sound } from './sound';
 import { CORNERS, type ArenaEvent, type Corner, type TickResult } from '@/lib/types';
 
 /** Everything the HUD needs, emitted when a tick's animation actually begins. */
@@ -53,6 +54,7 @@ export class ArenaRenderer {
   private readonly observer: ResizeObserver | null = null;
   private readonly sparks = new Sparks();
   private readonly shake = new Shake();
+  private readonly sound = new Sound();
   private readonly cameraHome = new THREE.Vector3();
   private readonly lookAt = new THREE.Vector3(0, 1.02, 0);
 
@@ -157,6 +159,18 @@ export class ArenaRenderer {
     this.paused = paused;
   }
 
+  /**
+   * Turn match audio on or off. Off is the default — see `sound.ts`.
+   *
+   * Expects to be called from a click: browsers will not start an AudioContext
+   * outside a user gesture, and a watch link that made noise on open would
+   * deserve to be closed. A paused renderer never reaches `startTick`, so a
+   * backgrounded tab goes quiet on its own without this being touched.
+   */
+  setSoundEnabled(enabled: boolean): void {
+    this.sound.setEnabled(enabled);
+  }
+
   /** Replay transport speed (1 = as fought). Clamped to a range that still animates. */
   setSpeed(speed: number): void {
     this.speed = Math.min(Math.max(speed, 0.1), 8);
@@ -212,6 +226,7 @@ export class ArenaRenderer {
     cancelAnimationFrame(this.frame);
     this.observer?.disconnect();
     this.sparks.dispose();
+    this.sound.dispose();
     this.scene.environment?.dispose();
     for (const corner of CORNERS) this.fighters[corner].dispose();
     this.scene.traverse((obj) => {
@@ -327,8 +342,14 @@ export class ArenaRenderer {
   /**
    * Impact feedback, once per tick over the whole event list — not per corner, or a
    * two-corner loop would fire each burst twice. Every branch is a spark burst, an
-   * emissive pulse on a body, a camera jolt, or some combination; none of them
-   * allocate geometry or touch the clip queue.
+   * emissive pulse on a body, a camera jolt, a sound, or some combination; none of
+   * them allocate geometry or touch the clip queue.
+   *
+   * Sound is dispatched from these same branches on purpose, rather than from a
+   * second pass over the events: what a viewer hears cannot then describe a
+   * different fight from what they see, and a voided punch can no more make the
+   * hit sound than it can play the strike clip. `sound.ts` is silent unless the
+   * viewer has switched it on, so every call here is a no-op by default.
    */
   private playImpacts(events: ArenaEvent[]): void {
     for (const event of events) {
@@ -344,6 +365,7 @@ export class ArenaRenderer {
           // readable through the flash — the flash must not erase the identity.
           this.fighters[event.defender].pulse(0xffffff, Math.min(0.72, 0.3 + event.damage / 26));
           this.shake.hit(0.006 + event.damage * 0.0022);
+          this.sound.hit(event.damage);
           break;
         }
         case 'blocked':
@@ -352,6 +374,7 @@ export class ArenaRenderer {
           this.sparks.burst(this.contact(event.defender, 1.36), CORNER_COLOR[event.defender], 8, 1.4);
           this.fighters[event.defender].pulse(CORNER_COLOR[event.defender], 0.6);
           this.shake.hit(0.004);
+          this.sound.blocked();
           break;
         case 'dodged':
           this.fighters[event.defender].pulse(0x8affd0, 0.45);
@@ -359,6 +382,7 @@ export class ArenaRenderer {
             this.sparks.burst(this.contact(event.attacker, 1.24), 0x8affd0, 8, 1.5);
             this.shake.hit(0.006);
           }
+          this.sound.dodged(event.riposte ?? 0);
           break;
         case 'void':
           // Amber, low and close to the body: the machine jamming, not a landed blow.
@@ -366,10 +390,12 @@ export class ArenaRenderer {
           // Same cap as the hit flash: a warning wash over the chassis, not a repaint.
           // At full strength the fighter turns solid amber and stops being its corner.
           this.fighters[event.who].pulse(VOID_COLOR, 0.45);
+          this.sound.jam();
           break;
         case 'ko':
           this.sparks.burst(this.contact(event.who, 1.22), 0xffffff, 26, 3);
           this.shake.hit(0.09);
+          this.sound.ko();
           break;
       }
     }

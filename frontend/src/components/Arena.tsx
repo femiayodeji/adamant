@@ -48,6 +48,10 @@ const SPEEDS = [0.25, 0.5, 1, 2, 4] as const;
 /** How long the end card is held on screen at the end of a recorded replay. */
 const END_CARD_MS = 1800;
 
+/** Where the sound preference is remembered. Per browser, not per match: a viewer
+ *  who muted the last fight should not have to mute the next one. */
+const SOUND_KEY = 'adam-arena.sound';
+
 interface LogRow {
   tick: number;
   event: ArenaEvent;
@@ -108,6 +112,10 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
   const [recording, setRecording] = useState<'running' | null>(null);
   const [videoNote, setVideoNote] = useState<string | null>(null);
   const [drained, setDrained] = useState(false);
+  /** Starts false on every render path, including the prerendered one — reading
+   *  the stored preference here instead would make the server's HTML and the
+   *  client's first render disagree. It is restored in an effect below. */
+  const [sound, setSound] = useState(false);
 
   const replaying = transport !== null;
 
@@ -168,6 +176,9 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
       recorder.current = null;
       rendererRef.current?.dispose();
       rendererRef.current = null;
+      // There is no renderer any more, so anything keyed on `ready` — the sound
+      // preference below — has to be re-applied to whatever replaces it.
+      setReady(false);
     };
   }, [onHud, sink]);
 
@@ -180,6 +191,37 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [recording]);
+
+  /* --------------------------------------------------------------- sound */
+
+  // The stored preference, applied after mount. A viewer who turned sound on
+  // last time gets it back, but the browser still holds the audio silent until
+  // they touch the page — see `sound.ts`, which resumes on the first gesture.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(SOUND_KEY) === 'on') setSound(true);
+    } catch {
+      // Private-mode Safari throws on localStorage. Sound just stays off.
+    }
+  }, []);
+
+  // Also runs when `ready` flips: the renderer is built asynchronously, so a
+  // restored preference usually lands before there is anything to tell.
+  useEffect(() => {
+    rendererRef.current?.setSoundEnabled(sound);
+  }, [sound, ready]);
+
+  const toggleSound = useCallback(() => {
+    setSound((on) => {
+      const next = !on;
+      try {
+        window.localStorage.setItem(SOUND_KEY, next ? 'on' : 'off');
+      } catch {
+        // Not being able to remember the choice is no reason not to honour it.
+      }
+      return next;
+    });
+  }, []);
 
   // The banner waits for the animation to catch up with the result — the last
   // clips are usually still playing when `match_end` lands.
@@ -486,6 +528,23 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
 
         <Callouts hud={hud} />
 
+        {/* Outside `.hud`, which is `pointer-events: none` and is a two-row layout
+            with nowhere to put a third thing. */}
+        <button
+          type="button"
+          className={`sound-toggle${sound ? ' on' : ''}`}
+          onClick={toggleSound}
+          aria-pressed={sound}
+          title={
+            sound
+              ? 'Mute the fight'
+              : 'Sound: punches, blocks, the repeat-cap buzzer and the bell'
+          }
+        >
+          <SpeakerIcon on={sound} />
+          <span className="mono">{sound ? 'sound' : 'muted'}</span>
+        </button>
+
         {!ready && !loadError && (
           <div className="overlay">
             <div className="box">
@@ -569,6 +628,33 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** The speaker on the sound toggle. Inline rather than a font or an emoji, so it
+ *  takes the button's own colour in both states and never arrives late. */
+function SpeakerIcon({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+      <path
+        d="M7.2 2.4 3.9 5.2H1.6v5.6h2.3l3.3 2.8z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      {on ? (
+        <g fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+          <path d="M10.1 5.6a3.4 3.4 0 0 1 0 4.8" />
+          <path d="M12.3 3.5a6.5 6.5 0 0 1 0 9" />
+        </g>
+      ) : (
+        <g fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+          <path d="M10.4 6.1 14 9.9" />
+          <path d="M14 6.1 10.4 9.9" />
+        </g>
+      )}
+    </svg>
   );
 }
 

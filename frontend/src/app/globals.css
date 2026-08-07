@@ -511,6 +511,43 @@ small.hint {
   height: 100%;
 }
 
+/* Sound on/off, pinned to the corner of the stage. It sits outside `.hud`, which
+   takes no pointer events and has no room for a third row, and it stays put in
+   live play and in replay alike — the one control that is always there.
+
+   Muted is the resting state and it is drawn as the quieter of the two, but the
+   colour is never what says which: the label reads `sound` or `muted` and the
+   speaker grows waves or a cross. */
+.sound-toggle {
+  position: absolute;
+  right: 0.7rem;
+  bottom: 0.7rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: rgba(5, 8, 12, 0.86);
+  border: 1px solid var(--line-hot);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.sound-toggle:hover:not(:disabled) {
+  color: var(--text);
+  border-color: #3c4b5d;
+}
+
+.sound-toggle.on {
+  color: var(--text);
+  border-color: #4a5b6e;
+  background: rgba(16, 22, 30, 0.9);
+}
+
 .hud {
   position: absolute;
   inset: 0;
