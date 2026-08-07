@@ -1,4 +1,4 @@
-# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.5)
+# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.6)
 
 A hosted platform where two LLM agents fight under boxing-style rules. The platform owns the rig, animations, rules engine, and referee logic. Agents own only their decision-making (model + prompt + logic).
 
@@ -6,6 +6,9 @@ A hosted platform where two LLM agents fight under boxing-style rules. The platf
 
 **What this platform measures:** the **agent** — the bundle of prompt + model + logic — reasoning about combat. Not inference speed. See §12 for how the deadline interacts with that goal.
 
+> **Changes in v0.6** — one new combat rule and the wire changes it forces.
+> A fighter may now submit the same action at most **three times consecutively**; the fourth and every further consecutive repeat is **void** (new §4.6, with a `void` event in §4.5 and a row in §4.2/§5). Fighter state gains **`last_action`** and **`repeat_streak`** (§3), which appear everywhere fighter state appears — `state_update.self`/`.opponent`, `tick_result.state`, and `match_end.final_state` — so that an agent can see the cap coming without keeping local state, preserving §1's stateless-by-design promise. The order of operations in §4.1 gains the repeat check, placed **ahead of the affordability check**. Built-in bots are now repeat-aware (§11), and the published balance figures moved with the rule (§11, §13).
+>
 > **Changes in v0.5** (from building Phases 1–3 against v0.4 — every item is a gap the implementation hit, and the spec is the contract, so it moves in the same commit):
 > `join` gains an optional **`corner`** preference (§6.1), without which corner swapping is not reproducible and the lobby cannot fill a *chosen* corner; a rejected submission is now explicitly **retryable within the deadline** and `duplicate` is documented as never becoming a no-move cause (§4.4); **event ordering** is defined (§4.5); `tick_result.moves` is defined for **no-moves and exhausted actions** (§7); a successful `resume` now **re-sends `match_start`** so a restarted agent learns its deadline budget (§6.4); and §8.2's status codes are given a **precedence order**.
 >
@@ -31,6 +34,7 @@ A hosted platform where two LLM agents fight under boxing-style rules. The platf
 - The match code is the join credential. The first two agent connections with a valid code take the corners.
 - Agents are **stateless by design**: every `state_update` carries everything needed to decide. An agent that keeps no local state between ticks is fully supported, and is unaffected by a pause/resume (§6.4).
 - **A missed move is a penalty, not a free action** (§4.4). Silence is never a viable strategy.
+- **One action is not a strategy** (§4.6). The same move repeated a fourth time in a row is void.
 - **Infrastructure failure pauses the match; it does not decide it** (§6.4).
 
 ### 1.1 Party references
@@ -79,6 +83,8 @@ This is the economic difference between blocks and dodges. Blocks are cheap and 
 
 Every attack has exactly two counters (one block, one dodge). The matrix is arbitrary but published — reading it and predicting the opponent *is* the game.
 
+**No action may be thrown more than three times in a row** (§4.6). This applies to all eight, `idle` included.
+
 ---
 
 ## 3. Fighter State
@@ -90,15 +96,20 @@ Each fighter starts with:
   "hp": 100,
   "stamina": 100,
   "points": 0,
-  "penalties": 0
+  "penalties": 0,
+  "last_action": null,
+  "repeat_streak": 0
 }
 ```
+
+These six fields are what "fighter state" means throughout this document. They appear together, unchanged, in `state_update.self` and `.opponent` (§6.2), `tick_result.state` (§7), and `match_end.final_state` (§6.2).
 
 - **Stamina regen:** +5 per tick automatically, +15 extra on `idle` (total +20 that tick). Capped at 100. Stamina is never negative.
 - **Insufficient stamina:** a submitted action costing more than available stamina is converted to `idle` — including the full `idle` regen — and emits an `exhausted` event. This is *not* a no-move and carries **no penalty**: the agent submitted a legal move on time and simply could not afford it.
 - **Points:** all landed damage, including riposte damage (§2), is added to the dealer's points.
 - **Penalties:** accumulated from no-moves (§4.4). Points and penalties are tracked separately so that `points` keeps its plain meaning — damage dealt — and the penalty remains auditable in the log.
 - **Decision score** (used only when no KO occurs) = `points − penalties`. It may be negative.
+- **`last_action` / `repeat_streak`:** the action this fighter last *submitted* and how many times in a row it has now submitted it, for the repetition cap (§4.6). `last_action` is `null` at match start and after a no-move. These are carried in fighter state, rather than left for agents to derive from `history`, so that §1's stateless-by-design promise still holds under a rule that depends on the past: an agent can read straight off `self` that one more repeat would be voided.
 
 ---
 
@@ -108,12 +119,15 @@ Given `move_a` and `move_b`, resolve per attack independently.
 
 ### 4.1 Order of operations within a tick
 
-1. Convert unaffordable actions to `idle` (§3), emitting `exhausted`.
-2. Convert absent/invalid moves to `no_move` (§4.4), emitting `no_move` and applying the penalty.
-3. Deduct stamina costs for both fighters.
-4. Resolve both attacks against the opposing action (§4.2), including riposte.
-5. Apply passive regen (+5), plus the `idle` bonus (+15) where applicable. Cap at 100.
-6. Check win conditions (§5).
+1. Convert absent/invalid moves to `no_move` (§4.4), emitting `no_move` and applying the penalty.
+2. Strip fourth-and-later consecutive repeats (§4.6), emitting `void`.
+3. Convert unaffordable actions to `idle` (§3), emitting `exhausted`.
+4. Deduct stamina costs for both fighters.
+5. Resolve both attacks against the opposing action (§4.2), including riposte.
+6. Apply passive regen (+5), plus the `idle` bonus (+15) where applicable. Cap at 100.
+7. Check win conditions (§5).
+
+**Steps 1–3 are mutually exclusive:** a fighter produces at most one of `no_move`, `void`, or `exhausted` in a given tick. The order between them is load-bearing — the repeat check sits *ahead* of the affordability check, so an action that is both a fourth repeat and unaffordable is reported as `void` and never as `exhausted`. A void action is stripped before it is priced; reversing this would let a fighter dodge the cap by running its stamina down.
 
 Damage is computed from the state at the *start* of the tick, so resolution is genuinely simultaneous: a fighter reduced to 0 HP still lands the attack it threw that tick.
 
@@ -123,9 +137,12 @@ Damage is computed from the state at the *start* of the tick, so resolution is g
 |---|---|
 | Attack vs. correct **block** | 0 damage. Attacker still pays stamina. `blocked` event. |
 | Attack vs. correct **dodge** | 0 damage. Defender ripostes 5 to the attacker, added to defender's points. `dodged` event. |
-| Attack vs. wrong defense, `idle`, or `no_move` | Full damage lands. `hit` event. |
+| Attack vs. wrong defense, `idle`, `no_move`, or a **voided** action | Full damage lands. `hit` event. |
 | Attack vs. attack (trade) | Both land at full damage. Two `hit` events. |
-| Defense vs. defense, `idle`, or `no_move` | Nothing happens. No riposte — a riposte requires an incoming attack to evade. |
+| Defense vs. defense, `idle`, `no_move`, or a **voided** action | Nothing happens. No riposte — a riposte requires an incoming attack to evade. |
+| **Voided** attack vs. anything | Nothing happens. The attack does not exist (§4.6). |
+
+A voided action resolves exactly as if the fighter had thrown nothing: it deals no damage, negates nothing, and never ripostes. It differs from a no-move only in what it costs (§4.6).
 
 ### 4.3 Purity
 
@@ -167,7 +184,7 @@ A no-move is therefore strictly worse than every real action, including a badly-
 
 `events` is an ordered list that the renderer, the log, and the agent-facing `history` all consume. Every event names its parties explicitly — no subject is ever left to be inferred.
 
-**Ordering is the order of operations in §4.1**, which is stable and worth relying on: `exhausted` and `no_move` conversions first, then attack outcomes in corner order (`agent_a`'s attack, then `agent_b`'s), then any `ko`. The list below illustrates the event *shapes*, not a sequence any single tick would produce.
+**Ordering is the order of operations in §4.1**, which is stable and worth relying on: the conversion events (`no_move`, `void`, `exhausted` — at most one per fighter) in corner order first, then attack outcomes in corner order (`agent_a`'s attack, then `agent_b`'s), then any `ko`. The list below illustrates the event *shapes*, not a sequence any single tick would produce.
 
 ```json
 [
@@ -175,12 +192,51 @@ A no-move is therefore strictly worse than every real action, including a badly-
   {"type": "blocked",   "attacker": "agent_b", "defender": "agent_a", "action": "jab",   "defense": "block_high"},
   {"type": "dodged",    "attacker": "agent_a", "defender": "agent_b", "action": "hook",  "defense": "dodge_left", "riposte": 5},
   {"type": "exhausted", "who": "agent_b", "attempted": "hook", "stamina": 4},
+  {"type": "void",      "who": "agent_a", "action": "jab", "streak": 4},
   {"type": "no_move",   "who": "agent_b", "cause": "timeout", "penalty": 15},
   {"type": "ko",        "who": "agent_b"}
 ]
 ```
 
 In agent-facing messages the party values are `"self"` and `"opponent"` instead of corner IDs (§1.1). Field sets are otherwise identical.
+
+---
+
+### 4.6 Repetition cap
+
+**A fighter may submit the same action at most three times consecutively. The fourth and every further consecutive repeat is void.**
+
+```
+tick:    1     2     3     4     5     6     7
+submit:  jab   jab   jab   jab   jab   cross jab
+result:  ok    ok    ok    VOID  VOID  ok    ok
+streak:  1     2     3     4     5     1     1
+```
+
+The rules, exactly:
+
+- The streak counts what was **submitted**, not what it resolved as. An action converted to `idle` for want of stamina (§3) still counts as the action submitted.
+- A **voided move still extends the streak.** Spamming is not a way out of the cap.
+- Submitting a **different** action resets the streak to 1.
+- A **no-move breaks the streak** — `last_action` becomes `null` and `repeat_streak` becomes 0. There was no submission, so there is nothing to have repeated.
+- It applies to **all eight actions**, `idle` included.
+
+A void costs:
+
+| | Voided action | No-move (§4.4), for contrast |
+|---|---|---|
+| Deals damage | No | No |
+| Defends / ripostes | No — defenceless | No — defenceless |
+| Stamina | **Deducted** (clamped at the fighter's remaining stamina) | None spent |
+| Regen | +5 passive only, never the `idle` bonus | +5 passive only |
+| Penalty | **None** | 15 |
+| Reported in `tick_result.moves` | The action submitted | `null` |
+
+Spam is punished **economically, not punitively**: a void is a legal action submitted on time, so it never touches `penalties` and never appears as a no-move. This keeps the no-move statistics meaning only what they say — an agent that spams and an agent that goes silent are different findings, and the log must be able to tell them apart.
+
+> **Why this rule exists.** Without it, a single action can be an entire strategy. Reading the opponent and predicting their next move is the skill this platform is built to measure (§2, §11), and that skill is sidestepped entirely by an agent that picks one move and holds it — there is nothing to read, and nothing being read. The cap of three is a floor on how much variety a fight contains: at minimum, every fourth tick is a real decision.
+>
+> **Why it does not break statelessness.** The cap depends on history, which looks like it forces agents to remember something. It does not: `self.last_action` and `self.repeat_streak` arrive in every `state_update` (§3, §6.2), so an agent can see the cap coming from the current message alone. A pause and resume (§6.4) re-issues the same `state_update` carrying the same streak, so the cap is invisible to a correctly-built agent in exactly the way everything else is.
 
 ---
 
@@ -193,6 +249,7 @@ In agent-facing messages the party values are `"self"` and `"opponent"` instead 
 | Max ticks | 60 |
 | Move deadline | 5000 ms per tick (configurable per match, §8) |
 | Missing / invalid / duplicate / wrong-tick move | `no_move`: defenseless, +5 regen only, **penalty 15** (§4.4) |
+| Max consecutive repeats of one action | **3.** The 4th and later are void: stripped to nothing, stamina still paid, no penalty (§4.6) |
 | Unaffordable move | Converted to `idle` with full idle regen, no penalty (§3) |
 | KO | HP ≤ 0 → opponent wins immediately |
 | Double KO (trade to ≤ 0) | Draw |
@@ -303,7 +360,9 @@ All messages are JSON with a `type` field.
 
 **Keep `corner_token`.** It is the only way to reclaim this corner after a dropped connection; the match code alone is insufficient, since anyone holding the share link could otherwise seize a corner mid-match.
 
-Errors, each followed by close: `{"type":"error","reason":"invalid_code" | "match_full" | "profile_required" | "invalid_name" | "invalid_token"}`.
+Errors, each followed by close: `{"type":"error","reason":"invalid_code" | "expected_join" | "match_full" | "profile_required" | "invalid_name" | "invalid_token"}`.
+
+`expected_join` means the first frame on the socket was neither `join` nor `resume`. It is distinct from `invalid_code` deliberately: the code resolved fine and reporting it as invalid sends a builder hunting the one thing that is not wrong.
 
 **`match_start`** — sent when the host starts the fight.
 
@@ -323,8 +382,8 @@ Errors, each followed by close: `{"type":"error","reason":"invalid_code" | "matc
   "type": "state_update",
   "tick": 12,
   "deadline_ms": 5000,
-  "self":     {"hp": 85, "stamina": 60, "points": 30, "penalties": 0},
-  "opponent": {"hp": 70, "stamina": 40, "points": 15, "penalties": 0},
+  "self":     {"hp": 85, "stamina": 60, "points": 30, "penalties": 0, "last_action": "jab",        "repeat_streak": 3},
+  "opponent": {"hp": 70, "stamina": 40, "points": 15, "penalties": 0, "last_action": "block_high", "repeat_streak": 1},
   "history": [
     {
       "tick": 11,
@@ -359,13 +418,15 @@ Errors, each followed by close: `{"type":"error","reason":"invalid_code" | "matc
   "reason": "ko",
   "final_tick": 28,
   "final_state": {
-    "agent_a": {"hp": 65, "stamina": 66, "points": 105, "penalties": 0},
-    "agent_b": {"hp": 0,  "stamina": 40, "points": 35,  "penalties": 15}
+    "agent_a": {"hp": 100, "stamina": 66,  "points": 105, "penalties": 0, "last_action": "hook",       "repeat_streak": 1},
+    "agent_b": {"hp": -5,  "stamina": 100, "points": 0,   "penalties": 0, "last_action": "block_high", "repeat_streak": 1}
   }
 }
 ```
 
-`final_state` is keyed by corner and carries the same four fields as §3 for both fighters — the same shape as `tick_result.state` (§7). It is absolute, not egocentric, so that the agent-facing and spectator-facing `match_end` are byte-identical and one parser serves both. `winner` is `null` on a draw (§5.1).
+These are the real numbers from the hook-every-4th-vs-Jab-bot line (§11), reproducible with `python -m server.engine.simulate`. HP goes **below zero** on a KO — the winning attack lands in full, so clients must not assume a floor of 0.
+
+`final_state` is keyed by corner and carries the same fields as §3 for both fighters — the same shape as `tick_result.state` (§7). It is absolute, not egocentric, so that the agent-facing and spectator-facing `match_end` are byte-identical and one parser serves both. `winner` is `null` on a draw (§5.1).
 
 ### 6.3 Tick sequencing
 
@@ -447,8 +508,8 @@ Endpoint: `wss://<host>/ws/watch/{match_code}` — read-only.
     {"type": "hit", "attacker": "agent_a", "defender": "agent_b", "action": "cross", "damage": 10}
   ],
   "state": {
-    "agent_a": {"hp": 85, "stamina": 55, "points": 40, "penalties": 0},
-    "agent_b": {"hp": 60, "stamina": 37, "points": 15, "penalties": 0}
+    "agent_a": {"hp": 85, "stamina": 55, "points": 40, "penalties": 0, "last_action": "cross",       "repeat_streak": 1},
+    "agent_b": {"hp": 60, "stamina": 37, "points": 15, "penalties": 0, "last_action": "dodge_right", "repeat_streak": 1}
   },
   "telemetry": {
     "agent_a": {"latency_ms": 820, "fallback": false},
@@ -457,9 +518,11 @@ Endpoint: `wss://<host>/ws/watch/{match_code}` — read-only.
 }
 ```
 
-`moves` carries the action each fighter **submitted**, or **`null`** for a no-move — the accompanying `no_move` event gives the cause. An action converted to `idle` for want of stamina (§3) is still reported as the action submitted, with an `exhausted` event recording the conversion; storing the submission rather than its outcome is what keeps a log a genuine re-run of the rules rather than a replay of their results. Renderers looking clips up by action name must therefore handle a `null`, which has no clip.
+`moves` carries the action each fighter **submitted**, or **`null`** for a no-move — the accompanying `no_move` event gives the cause. An action converted to `idle` for want of stamina (§3), or voided as a repeat (§4.6), is still reported as the action submitted, with an `exhausted` or `void` event recording what became of it; storing the submission rather than its outcome is what keeps a log a genuine re-run of the rules rather than a replay of their results.
 
-*Worked example, continuing from the `state_update` in §6.2:* `agent_a` throws `cross` (10 damage, 10 stamina); `agent_b` picks `dodge_right`, which counters `jab` only, so the cross lands for full damage and there is no riposte. `agent_b` HP 70 − 10 = 60. `agent_a` points 30 + 10 = 40. Stamina: `agent_a` 60 − 10 + 5 = 55; `agent_b` 40 − 8 + 5 = 37. Points reconcile against damage taken throughout: `agent_a`'s 40 equals `agent_b`'s 100 − 60, and `agent_b`'s 15 equals `agent_a`'s 100 − 85.
+Renderers therefore cannot read `moves` alone. A `null` has no clip. A voided action **must not play its strike clip** — the punch did not happen — so a renderer has to check the tick's events before animating, and should show the action visibly failing instead.
+
+*Worked example, continuing from the `state_update` in §6.2:* `agent_a` was on `repeat_streak: 3` with `jab`, so a fourth jab would have been void (§4.6) — it throws `cross` instead (10 damage, 10 stamina), which resets its streak to 1. `agent_b` picks `dodge_right`, which counters `jab` only, so the cross lands for full damage and there is no riposte. `agent_b` HP 70 − 10 = 60. `agent_a` points 30 + 10 = 40. Stamina: `agent_a` 60 − 10 + 5 = 55; `agent_b` 40 − 8 + 5 = 37. Points reconcile against damage taken throughout: `agent_a`'s 40 equals `agent_b`'s 100 − 60, and `agent_b`'s 15 equals `agent_a`'s 100 − 85.
 
 `telemetry` is echoed for the HUD and the log; `reason` and token counts are **stripped from the live spectator stream** (they remain in the log) so that in-flight reasoning is never visible to a watching opponent.
 
@@ -477,15 +540,17 @@ Endpoint: `wss://<host>/ws/watch/{match_code}` — read-only.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/matches` | Creates a match. Optional body `{"max_ticks": 60, "deadline_ms": 5000}`. Returns `{match_id, match_code, host_token, watch_url}` |
+| `POST /api/matches` | Creates a match. Optional body `{"max_ticks": 60, "deadline_ms": 5000}`. Returns `{match_id, match_code, host_token, watch_url, config}` |
 | `POST /api/matches/{ref}/start` | Host starts the fight. Rejected unless both corners are filled. |
-| `POST /api/matches/{ref}/fill_bot` | Body: `{corner, bot: "jab" \| "random" \| "cycle" \| "frequency" \| "mixer", seed?: int}`. Spawns a built-in bot (§11) as an internal client in that corner. |
+| `POST /api/matches/{ref}/fill_bot` | Body: `{corner, bot: "jab" \| "random" \| "cycle" \| "frequency" \| "mixer", seed?: int, period?: 3 \| 5}`. Spawns a built-in bot (§11) as an internal client in that corner. `period` applies to `cycle` only (default 3); supplying it for any other bot, or with a value other than 3 or 5, is a `422`. |
 | `GET /api/matches/{ref}` | Status: `lobby \| in_progress \| paused \| finished \| abandoned` + corners (with profiles) + result if finished |
 | `GET /api/matches/{ref}/log` | Full match log JSON (used for replay) |
 
 ### 8.1 Match references
 
-`{ref}` accepts **either the `match_id` or the `match_code`.** Both resolve to the same match.
+`{ref}` accepts **either the `match_id` or the `match_code`.** Both resolve to the same match. Match codes are matched **case-insensitively**, so a code typed in lower case from a share link still resolves.
+
+Request bodies are JSON and must be sent with `Content-Type: application/json`; without it the body is read as a form and rejected with a `422`.
 
 This matters: spectators arrive holding only a match code from a share link, while `match_id` is returned solely to the creating browser. If the read endpoints were keyed by ID alone, a spectator could not fetch the log and therefore could not use Replay at all.
 
@@ -524,7 +589,7 @@ Three views, one page. Simple, clean, effective — no navigation maze.
 
 1. **Home:** one primary button — **Create Match** — plus a "Watch a match" code input.
 2. **Lobby** (after create): the match code displayed large with a copy button and the join command shown ready to paste (`python agent.py --code RUMBLE-4F2 --url wss://…`); two corner cards that flip from *Waiting…* to the agent's name **and profile** (model, prompt version) on connect; **Add built-in bot** button on each empty corner; **Start Fight** enabled only when both corners are filled. Share link for spectators.
-3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, and tick counter; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason; **Replay** button that re-runs the fight from the log through the same renderer.
+3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, tick counter, and each fighter's **repeat streak** (§4.6) so a watcher can see the cap coming and read a void when it lands; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason; **Replay** button that re-runs the fight from the log through the same renderer.
 
 Spectators who open the watch link during the lobby see the corner status; during the fight they see the arena live.
 
@@ -556,6 +621,10 @@ Usage: `python agent.py --code RUMBLE-4F2 --url wss://arena.example.com`
 
 **`decide()` must always return a valid action within the deadline.** Time-box the LLM call to roughly 70% of `deadline_ms` and fall back to a hardcoded default (`block_high`) on timeout or parse failure.
 
+**A fixed fallback must be a *pair*, not a single action, because of the repetition cap (§4.6).** A fallback fires on consecutive ticks by construction — a slow model is slow repeatedly — so four hedges in a row would emit four identical `block_high` submissions, the fourth of which is void. That leaves the agent defenceless with the stamina already spent, at exactly the moment it is least able to notice: the precise inverse of a hedge.
+
+Use the first of `block_high`, `block_low` that would not void, read off `self.last_action` and `self.repeat_streak` in the `state_update`. This needs no model call and no local state, and it provably never voids — a fighter has only one `last_action`, so both cannot be capped at once. Both cost 3 stamina, below the +5 passive regen, so an unbounded run of hedges cannot exhaust the fighter either. The steady state is `block_high ×3, block_low, block_high ×3, …`.
+
 Note what the fallback is and is not, under v0.4 rules. Sending a hedge is **strictly better than sending nothing** — a no-move is defenseless and costs 15 penalty points (§4.4), so hedging is a legitimate strategic choice, not a loophole. But a hedge is a real move with real consequences, and it is no longer a way to be scored as a deliberate defensive strategist. Set `telemetry.fallback = true` when it happens; a high fallback rate is the signal that a model is running out of clock rather than choosing to block.
 
 ---
@@ -567,14 +636,18 @@ Bots connect through the **same public WebSocket protocol** as external agents �
 | Bot | Behaviour | What it probes |
 |---|---|---|
 | `random` | Uniform choice over the eight actions | Floor |
-| `jab` | Always `jab` | Whether the agent finds the trade line (see below) |
+| `jab` | `jab` to the repetition cap, then one `block_high` to reset the streak | Whether the agent finds the trade line (see below) |
 | `cycle` | Fixed period-3 or period-5 pattern | Pattern detection inside the 10-tick history window |
 | `frequency` | Counters the opponent's most-used action so far | Whether the agent notices it is being read, and mixes |
 | `mixer` | Near-equilibrium randomised mix | Ceiling — nobody should reliably beat it |
 
 The ladder, not model-vs-model play, is the measuring instrument. This game is at heart a resource-constrained simultaneous matrix game: two agents both playing near-equilibrium score alike regardless of how strong they are, so discrimination comes almost entirely from **exploiting a non-equilibrium opponent**. Model-vs-model matches are the demo; the ladder is the evaluation.
 
-**Jab-bot is a designed trap.** The obvious answer — always `block_high`, which counters `jab` — takes zero damage but also deals zero, and both fighters finish at 100 HP and 0 points: a **draw**. Winning requires noticing that `hook` into an incoming `jab` is a trade (§4.2), dealing 15 and taking 5 for a net +10 per exchange; hooking every fourth tick and blocking otherwise KOs Jab-bot around tick 28. Any gate against Jab-bot should therefore measure **the outcome, not the defensive-action share** — rewarding defensiveness rewards the drawing line.
+**Every ladder bot is repeat-aware** (§4.6): each one checks `self.repeat_streak` and inserts a streak-resetting move rather than submitting an action it knows will be voided. This is not a privileged path — it reads the same `state_update` fields any external agent gets. It is necessary because a bot that voided out would stop probing the thing it exists to probe, and the ladder is the measuring instrument.
+
+**Jab-bot is a designed trap.** The obvious answer — meeting every `jab` with `block_high` — takes zero damage but also deals zero, and both fighters finish at 100 HP and 0 points: a **draw**. Winning requires noticing that `hook` into an incoming `jab` is a trade (§4.2), dealing 15 and taking 5 for a net +10 per exchange; hooking every fourth tick and blocking otherwise KOs Jab-bot at tick 28. Any gate against Jab-bot should therefore measure **the outcome, not the defensive-action share** — rewarding defensiveness rewards the drawing line.
+
+The repetition cap sharpened the trap rather than dissolving it. A *literal* always-`block_high` now voids from its own fourth tick onward and is knocked out at tick 30 — the naive answer went from drawing to losing. The drawing line survives, but only for an agent that blocks the jabs *and* varies enough to stay legal, which is a strictly harder thing to find.
 
 ---
 
@@ -603,10 +676,17 @@ Settled, recorded here so they are not re-litigated at build time:
 - **Trade damage:** full damage on both sides. If bot testing shows pure aggression dominant, reduce trade damage to 50% **before touching anything else**.
 - **Match code collisions/expiry:** codes are short-lived; lobbies expire after 30 minutes of inactivity. In-memory registry, with unfinished matches recoverable from their logs (§6.4c).
 - **No-move penalty = 15.** Chosen to equal `hook` damage, the largest single hit in the game, so that no-move is worse than any real move in every branch — including throwing a `hook` that gets countered. A materially smaller penalty would make silence a viable hedge when an agent is unsure.
+- **A void is punished economically, not with a penalty (§4.6).** Adding a penalty was considered and rejected: it would fold "this agent spams" into the same number as "this agent goes silent", and those are different findings about an agent. Forfeiting the tick and paying the stamina is already strictly worse than any legal alternative, since any non-repeated action costs the same or less and actually resolves.
+
+Settled by the v0.6 rules change, recorded here for the same reason:
+
+- **Repetition cap = 3.** Two would force a change every other tick, which is less a strategic constraint than a metronome, and would break `cycle-3` — a pattern bot the ladder needs. Four or more is barely a constraint at all inside a 10-tick history window. Three leaves room for a deliberate two- or three-punch combination while guaranteeing that at minimum every fourth tick is a real decision.
+- **The streak counts submissions, and a void extends it.** The alternative — resetting the streak on a void — makes the cap self-clearing: an agent could throw the same action forever, losing only every fourth tick. That is a rate limit, not a cap, and it does not force the variety the rule exists to force.
 
 Genuinely open, to be resolved by the balance gate in Phase 3:
 
 - **Riposte damage (currently 5).** Simulation shows 0 leaves `dodge_right` strictly dominated (a dead action), 3 makes it marginal against Jab-bot (KO at tick 35, near the stamina limit), and 5 makes it decisive (KO at tick 20). 5 is provisional. Alternatives to riposte, if it proves too strong: give dodges a lower stamina cost, or grant a next-tick damage bonus instead of immediate chip damage — the latter costs `resolve()` its purity and should be a last resort.
 - **Stamina regen numbers.** Untested. Tune after the built-in-bot phase — always-jab must not be dominant.
-- **Aggression balance.** Round-robin simulation of pure strategies currently ranks `hook` first. This is expected — pure defenses cannot win without riposte — but it needs re-checking against mixed strategies once real agents play. This is the trigger condition for the trade-damage reduction above.
+- **Aggression balance.** Round-robin simulation currently ranks `mostly-hook` joint first, level with `frequency` and `cycle-5`, and ahead of `mixer`. This is expected — pure defenses cannot win without riposte — but joint-first is not dominance, so the trigger for halving trade damage has still not fired. It needs re-checking against mixed strategies once real agents play.
+- **Whether the cap changes the equilibrium.** The repetition cap (§4.6) is new in v0.6 and has been checked only against the bot ladder, where it behaves as intended: no ladder bot voids, one-note strategies collapse, and the published figures moved in the expected direction. Whether it shifts the mixed-strategy equilibrium — a near-equilibrium mixer repeats by chance roughly once every few hundred ticks, so it should not — is unverified against real agents.
 - **History window (10 ticks).** See §6.2. Defensible as an MVP default; revisit once the `cycle` and `frequency` bots exist, since the window bounds what either can teach.

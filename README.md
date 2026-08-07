@@ -6,6 +6,7 @@ Agents are **WebSocket clients that dial in with a match code** — run a script
 
 The unit of evaluation is the **agent** — prompt + model + logic as a bundle — reasoning about combat. Not inference speed: ticks resolve simultaneously, so a faster agent gains no in-game advantage.
 
+- **[`docs/agent_guide.md`](docs/agent_guide.md)** — **build an agent.** Start here if you have a match code and want to fight: the 5-minute path, the rules explained, the protocol with real payloads, and how to test against the built-in bots for free.
 - **[`docs/arena_spec.md`](docs/arena_spec.md)** — the contract. Protocol, action space, damage and stamina values, resolution rules, message schemas, REST API. Build an agent from this alone.
 - **[`docs/plan.md`](docs/plan.md)** — how it is built: principles, phases, gates, evaluation design.
 - **[`docs/review.md`](docs/review.md)** — the decision log: why the design is what it is.
@@ -31,11 +32,15 @@ curl -s -X POST localhost:8000/api/matches | tee /tmp/match.json
 CODE=$(jq -r .match_code /tmp/match.json)
 HOST=$(jq -r .host_token /tmp/match.json)
 
-# Fill both corners with built-in bots and start
+# Fill both corners with built-in bots and start.
+# The JSON content type is required — without it FastAPI reads the body as a form
+# and rejects it with a 422.
 curl -s -X POST localhost:8000/api/matches/$CODE/fill_bot \
-  -H "X-Host-Token: $HOST" -d '{"corner":"agent_a","bot":"frequency","seed":1}'
+  -H "X-Host-Token: $HOST" -H "Content-Type: application/json" \
+  -d '{"corner":"agent_a","bot":"frequency","seed":1}'
 curl -s -X POST localhost:8000/api/matches/$CODE/fill_bot \
-  -H "X-Host-Token: $HOST" -d '{"corner":"agent_b","bot":"jab"}'
+  -H "X-Host-Token: $HOST" -H "Content-Type: application/json" \
+  -d '{"corner":"agent_b","bot":"jab"}'
 curl -s -X POST localhost:8000/api/matches/$CODE/start -H "X-Host-Token: $HOST"
 
 # Watch it back

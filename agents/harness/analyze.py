@@ -84,6 +84,7 @@ def match_metrics(log: dict, corner: str) -> dict:
     counter_opportunities = counter_correct = 0
     attacks_faced = dodges_landed = blocks_landed = 0
     no_move_by_cause: Counter[str] = Counter()
+    voids = 0
     fallback_ticks = telemetry_ticks = 0
     latencies: list[int] = []
     tokens_in = tokens_out = 0
@@ -95,6 +96,12 @@ def match_metrics(log: dict, corner: str) -> dict:
         mine, theirs = moves.get(corner), moves.get(opp)
         exhausted = {e.get("who") for e in events if e.get("type") == "exhausted"}
         no_moved = {e.get("who") for e in events if e.get("type") == "no_move"}
+        # A voided repeat (spec 4.6) is stripped to nothing: it threatens nothing
+        # and it defends nothing, so it must not be scored as either. The stamina
+        # is still spent, which is the whole point of the rule.
+        voided = {e.get("who") for e in events if e.get("type") == "void"}
+        if corner in voided:
+            voids += 1
 
         if mine and corner not in no_moved:
             actions[mine] += 1
@@ -102,9 +109,9 @@ def match_metrics(log: dict, corner: str) -> dict:
             if corner not in exhausted:
                 stamina_spent += STAMINA_COST.get(mine, 0)
 
-        if theirs in ATTACKS and opp not in exhausted and opp not in no_moved:
+        if theirs in ATTACKS and opp not in exhausted | no_moved | voided:
             attacks_faced += 1
-            if mine in DEFENSES and corner not in no_moved:
+            if mine in DEFENSES and corner not in no_moved | voided:
                 counter_opportunities += 1
                 if mine in COUNTERS[theirs]:
                     counter_correct += 1
@@ -149,6 +156,7 @@ def match_metrics(log: dict, corner: str) -> dict:
         "corner": corner,
         "entrant": label_of(log, corner),
         "opponent": label_of(log, opp),
+        "persona": profile.get("persona"),
         "prompt_version": profile.get("prompt_version"),
         "agent_version": profile.get("agent_version"),
         "resolved_model": profile.get("resolved_model") or profile.get("model"),
@@ -191,6 +199,10 @@ def match_metrics(log: dict, corner: str) -> dict:
         "no_moves": sum(no_move_by_cause.values()),
         "no_move_rate": _safe_div(sum(no_move_by_cause.values()), n_ticks),
         "no_move_by_cause": dict(no_move_by_cause),
+        # Ticks thrown away to the repetition cap. Distinct from a no-move: it
+        # carries no penalty, so nothing else in this row would reveal it.
+        "voids": voids,
+        "void_rate": _safe_div(voids, n_ticks),
         "instruction_following_rate": _safe_div(n_ticks - invalid, n_ticks),
         "fallback_rate": _safe_div(fallback_ticks, telemetry_ticks),
         "mean_latency_ms": _safe_div(sum(latencies), len(latencies)),

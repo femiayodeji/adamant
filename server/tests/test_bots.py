@@ -118,10 +118,14 @@ async def test_a_bot_can_fight_an_external_agent(arena):
 
     for tick in range(1, 7):
         await human.expect("state_update")
-        await human.move(tick, "block_high")
+        # The drawing line against Jab-bot, played legally under the repetition cap
+        # (spec §4.6): block the jabs, and spend the fourth tick resetting the streak
+        # rather than throwing a fourth `block_high` that would void. Jab-bot is
+        # resetting its own streak on the same tick, so nothing lands either way.
+        await human.move(tick, "idle" if tick % 4 == 0 else "block_high")
 
     end = await human.expect("match_end", timeout=10)
-    assert end["reason"] == "draw", "always-block_high against Jab-bot is the drawing line"
+    assert end["reason"] == "draw", "blocking Jab-bot correctly is still only a draw"
     assert end["final_state"]["agent_a"]["hp"] == 100
     assert end["final_state"]["agent_b"]["hp"] == 100
 
@@ -145,6 +149,39 @@ async def test_fill_bot_requires_the_host_token(arena):
     "body", [{"corner": "agent_c", "bot": "jab"}, {"corner": "agent_a", "bot": "boxer"}]
 )
 async def test_fill_bot_validates_its_arguments(arena, body):
+    created = await arena.create_match()
+    response = await arena.fill_bot(created["match_code"], created["host_token"], **body)
+    assert response.status_code == 422
+
+
+async def test_cycle_bot_can_be_asked_for_either_published_period(arena):
+    """Spec §11 describes a period-3 *or* period-5 pattern. Without a route for
+    `period`, half that ladder rung is unreachable from the REST API."""
+    created = await arena.create_match()
+    code, host = created["match_code"], created["host_token"]
+
+    default = await arena.fill_bot(code, host, corner="agent_a", bot="cycle")
+    assert default.status_code == 200 and "period" not in default.json()
+
+    five = await arena.fill_bot(code, host, corner="agent_b", bot="cycle", period=5)
+    assert five.status_code == 200
+    assert five.json()["period"] == 5
+
+    lobby = (await arena.get(f"/api/matches/{code}")).json()
+    names = {c: lobby["corners"][c]["name"] for c in ("agent_a", "agent_b")}
+    assert names == {"agent_a": "Cycle-3-bot", "agent_b": "Cycle-5-bot"}, (
+        "the period must be in the name, or two entrants merge into one row"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"corner": "agent_a", "bot": "cycle", "period": 4},
+        {"corner": "agent_a", "bot": "jab", "period": 3},
+    ],
+)
+async def test_fill_bot_rejects_an_unusable_period(arena, body):
     created = await arena.create_match()
     response = await arena.fill_bot(created["match_code"], created["host_token"], **body)
     assert response.status_code == 422

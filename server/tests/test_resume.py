@@ -177,6 +177,37 @@ async def test_both_corners_abandoning_is_a_draw(arena):
     await spectator.close()
 
 
+async def test_one_disconnect_announces_the_pause_exactly_once(arena):
+    """One `match_paused` per absent corner, not per poll of the resume loop. A
+    spectator that counts frames to drive a countdown overlay would otherwise see
+    the timer restart."""
+    created, a, b = await seated_match(arena, deadline_ms=5000, max_ticks=6)
+    spectator = await Spectator.connect(arena, created["match_code"])
+    await spectator.expect("lobby_update")
+    await arena.start(created["match_code"], created["host_token"])
+    await a.expect("match_start")
+    await b.expect("match_start")
+    await spectator.expect("match_start")
+    await a.expect("state_update")
+    await b.expect("state_update")
+
+    await b.close()
+    await asyncio.sleep(1.0)  # several passes of the resume loop
+
+    frames = []
+    while True:
+        try:
+            frames.append(await spectator.expect("match_paused", timeout=0.4))
+        except (AssertionError, asyncio.TimeoutError, Exception):
+            break
+
+    assert len(frames) == 1, f"expected one pause announcement, got {len(frames)}"
+    assert frames[0]["missing"] == "agent_b"
+
+    await a.close()
+    await spectator.close()
+
+
 async def test_a_server_restart_rebuilds_the_match_from_its_log(tmp_path):
     """Resumability covers the server too. Because `resolve()` is pure and the log is
     an event stream, replaying the log reconstructs exact state — which is why the
@@ -232,12 +263,16 @@ async def test_a_server_restart_rebuilds_the_match_from_its_log(tmp_path):
             if tick > 3:
                 await back_a.expect("state_update")
                 await back_b.expect("state_update")
-            await back_a.move(tick, "cross")
+            # A fourth consecutive `cross` would void (spec §4.6), so tick 4 breaks
+            # the streak with a jab. The streak is part of the state rebuilt from the
+            # log, which is the point: it has to survive the restart like everything
+            # else, or tick 4 would be judged against a streak of zero.
+            await back_a.move(tick, "jab" if tick == 4 else "cross")
             await back_b.move(tick, "idle")
 
         end = await back_a.expect("match_end", timeout=5)
         assert end["final_tick"] == 5
-        assert end["final_state"]["agent_b"]["hp"] == 50, "5 crosses across two processes"
+        assert end["final_state"]["agent_b"]["hp"] == 55, "4 crosses and a jab across two processes"
 
         logged = (await second.get(f"/api/matches/{created['match_code']}/log")).json()
         assert [t["tick"] for t in logged["ticks"]] == [1, 2, 3, 4, 5], "one continuous log"

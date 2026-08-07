@@ -149,3 +149,25 @@ before the server existed. It is **the only duplicate of server logic in this
 codebase**, it is imported by nothing on the live path, and it should be deleted once
 a real server can be pointed at. If the rules table changes and nobody updates it,
 the demo drifts — the demo is a fixture, never a reference.
+
+## 13. `void` is a fourteenth clip, not a ninth action
+
+The repeat cap (spec §4.6) strips an action: `tick_result.moves` still reports the
+submitted action, but the punch never happened. Playing the action's own clip would
+therefore *lie* — a spectator would see a jab land nothing and read it as a miss or a
+block, not as the cap firing.
+
+**Taken:** a `void` clip, played *instead of* the action's clip whenever the tick
+carries a `void` event for that fighter. The lead hand loads, jams a third of the way
+out, and drops back to guard — an aborted wind-up, visibly not a punch.
+
+It is **event-driven, exactly like `exhausted`** (#4), and that is the whole reason it
+does not violate "clip name IS the action name": the eight *action* clips still map
+1:1 to the eight action names with no table. `void`, `exhausted`, `hit_react`,
+`riposte`, `ko` and `stance` are named after events and states, not actions, and the
+renderer reaches them from `tick.events` rather than from `tick.moves`.
+
+Clip count is now **fourteen** (was thirteen, see #4). The HUD carries the same fact
+in three redundant forms — struck-through move chip, an amber `VOID` callout on that
+fighter's side of the canvas, and a `REP n/3` pip row that goes hot on the third
+repeat so the cap is visible one tick *before* it fires.

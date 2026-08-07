@@ -1,7 +1,8 @@
 # Spec notes from building the agents
 
 Findings from writing `agents/reference_agent.py` and `agents/harness/` against
-`docs/arena_spec.md` v0.4 and the Evaluation Design section of `docs/plan.md`.
+`docs/arena_spec.md` (v0.4, plus the v0.6 repetition cap) and the Evaluation
+Design section of `docs/plan.md`.
 
 The reference agent is supposed to double as a check that the spec alone is
 sufficient. It mostly is: the protocol, the action table, and the resolution
@@ -158,7 +159,37 @@ Not a defect — §12 predicts precisely this — but the spec would be more use
 a builder if it said outright: *in the standard bracket, turn extended thinking
 off; in the deep bracket, turn it on, and never compare the two.*
 
-## 10. Smaller things
+## 10. The documented fallback voids itself under the repetition cap (v0.6)
+
+§10 documents `block_high` as the fallback on timeout or parse failure. §4.6 now
+voids the 4th consecutive repeat of any action.
+
+These two combine badly, and specifically for the agents the fallback exists to
+protect. A fallback fires on *consecutive* ticks by construction — a model that is
+slow is slow repeatedly, and a model that cannot produce strict JSON cannot
+produce it repeatedly — so a hedge pinned to one action reaches the cap on its
+fourth firing and is **voided: stripped to nothing, defenceless, stamina still
+spent**. The hedge exists to be strictly better than silence; past the cap it is
+no better than a no-move minus the penalty, and it arrives exactly when the agent
+is least able to notice.
+
+This agent alternates `block_high` / `block_low` (`rules.fallback_action`, chosen
+from `state_update.self.repeat_streak`, so it stays stateless). Alternating can
+never void, because switching action resets the streak, and both cost 3 stamina,
+which is below the +5 passive regen — so an unbounded run of hedges cannot
+exhaust the fighter either.
+
+Suggested amendment: §10 should specify a two-action fallback rather than one, or
+state the cap interaction outright. Anyone copying the published example before
+this is fixed inherits a hedge that fails in the fourth tick of exactly the
+scenario it was written for.
+
+Left deliberately alone: an action the *model* chose is sent as submitted even
+when it will void. The prompt states the cap and reports the current streak, so
+walking into it is a decision the agent made, and repairing it locally would
+launder the instruction-following the platform is trying to measure.
+
+## 11. Smaller things
 
 - **Name regex.** `^[A-Za-z0-9 _-]{1,24}$` admits an all-whitespace name
   (`"    "`), which renders as an empty corner label. Harmless, easy to reject.

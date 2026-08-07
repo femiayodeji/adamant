@@ -56,9 +56,7 @@ export function Lobby({ code, view, hostToken, demo }: LobbyProps) {
     <div className="stack">
       <div className="card code-plate">
         <div>
-          <div className="label muted" style={{ fontSize: '0.72rem', letterSpacing: '0.16em' }}>
-            MATCH CODE
-          </div>
+          <div className="label">Match code</div>
           <div className="code mono">{code}</div>
         </div>
         <div className="row">
@@ -133,7 +131,12 @@ function CornerCard({
 
   return (
     <div className={`corner ${side}`}>
-      <div className="label">{corner === 'agent_a' ? 'Corner A' : 'Corner B'}</div>
+      <div className="row" style={{ gap: '0.45rem' }}>
+        <span className={`badge ${side}`} aria-hidden>
+          {side.toUpperCase()}
+        </span>
+        <span className="label">{corner === 'agent_a' ? 'Corner A' : 'Corner B'}</span>
+      </div>
       {info ? (
         <>
           <div className="name">{info.name}</div>

@@ -54,20 +54,22 @@ _Updated 2026-08-06._
 | 5 — Reference agent | **Built** | Not evaluated. All four criteria need live models; the agent itself is verified against a real server with a stubbed model. |
 | 6 — Deployment | **Image built** | Not passed. The container is verified locally end to end — healthy in ~8s, non-root, 169 MB, a full bot match through the public API, the browser gate against the image, logs surviving `down`/`up`, graceful SIGTERM. The gate itself needs a real host and a friend on another network. Render blueprint drafted in `render.yaml`, never deployed. |
 
-**Balance figures reproduced** (`python -m server.engine.simulate`), all three as published:
+**Balance figures reproduced** (`python -m server.engine.simulate`). These moved with the v0.6 repetition cap (spec §4.6) and are re-derived, not hand-edited:
 
-- always-`block_high` vs Jab-bot → 0–0 draw at tick 60, both fighters at 100 HP. The trap holds.
-- hook-every-4th vs Jab-bot → KO at **tick 28**, 65/0 HP, 105/35 points — matching the spec's own `match_end` example exactly.
-- `dodge_right` vs Jab-bot → KO at **tick 20**. Not a dead action; riposte 5 is doing its job.
+- `mostly-block_high` vs Jab-bot → 0–0 draw at tick 60, both fighters at 100 HP. **The trap holds** — the drawing line survives the cap, played by a bot that resets its streak.
+- always-`block_high` vs Jab-bot → **KO against the blocker at tick 30.** New under the cap: a literal one-note defense voids from tick 4 and is walked through. The naive answer went from drawing to losing, which makes the trap sharper rather than weaker.
+- hook-every-4th vs Jab-bot → KO at **tick 28**, 100/-5 HP, 105/0 points. The tick figure is **unchanged by the cap** — the line never repeats four times running — while the margin widened, because Jab-bot now spends every fourth tick resetting its own streak.
+- `mostly-dodge_right` vs Jab-bot → KO at **tick 26**. Not a dead action; riposte 5 is still doing its job.
+- always-`jab` vs always-`idle` → 15 total damage across 60 ticks. The cap working: three punches land and the strategy is finished.
 
-**Balance check outcome (Phase 3):** always-`jab` is *not* dominant — it finishes 6W/18L, near the bottom of a 15-entrant round-robin — so the stamina/damage tuning trigger does not fire. `frequency` and `cycle-5` top the table, which is the intended shape: the exploiters beat the exploitable.
+**Balance check outcome (Phase 3, re-run under the v0.6 cap):** always-`jab` is *not* dominant — it finishes 10W/28L in a 22-entrant round-robin — so the stamina/damage tuning trigger does not fire. `frequency`, `mostly-hook`, and `cycle-5` top the table at 38W each, which is the intended shape: the exploiters beat the exploitable. Every literal one-action entrant now sits at or near the bottom, and the four one-note *defenses* win nothing at all.
 
 **Two behaviours worth knowing about, neither a defect:**
 
 - The renderer paces the fight by *animation*, not by tick arrival. Bots resolve a tick in milliseconds, so the arena routinely shows "+19 queued" early in a bot-vs-bot match and finishes the animation seconds after the match itself has ended. This is the clip queue working as designed (spec §13), and it is why the end banner waits for playback to catch up.
 - A spectator opening a watch link on a match already in progress replays it from tick 1 rather than jumping to live, because the server sends the full tick history on connect and the renderer animates all of it. Fine for a 20-tick bot match; for a 60-tick match a late joiner is a long way behind. If that matters, the fix belongs in the renderer's catch-up policy, not in the server.
 
-One item is **left open deliberately**: pure aggression (always-`hook`) places third at 22W. The plan's trigger for halving trade damage is aggression dominating *once mixed strategies are in play*, and the only mixed strategies in this round-robin are `mixer` and `random`. That reading needs real agents, so trade damage stays at full and this stays open for re-check after Phase 3.5. Riposte remains at 5.
+One item is **left open deliberately**: aggression (`mostly-hook`) places joint first at 38W. The plan's trigger for halving trade damage is aggression dominating *once mixed strategies are in play*, and the only mixed strategies in this round-robin are `mixer` and `random`. That reading needs real agents, so trade damage stays at full and this stays open for re-check after Phase 3.5. Riposte remains at 5.
 
 ## Target Layout
 
@@ -116,6 +118,7 @@ Tests must include **table-invariant tests**, not just resolver tests:
 - No defense counters every attack.
 - No action has zero/negative stamina cost except `idle`.
 - **No action is strictly dominated** — for every pair of defenses, neither is at least as good as the other across all opponent actions once stamina cost *and* riposte are accounted for. This is the invariant that catches the `dodge_right` class of bug; a coverage-only check does not.
+- **The repetition cap (spec §4.6) holds at match scale** — a one-note strategy lands exactly three hits and then nothing, a void costs stamina but never a penalty, a void is never confused with a no-move, and the cap-respecting version of every one-action strategy beats the literal one.
 - A no-move is worse than every real action against every opponent action.
 - Property-style check: any 60-tick match between two fixed strategies terminates with a valid result.
 

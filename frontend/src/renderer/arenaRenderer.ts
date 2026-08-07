@@ -9,9 +9,11 @@
  */
 
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { Fighter } from './fighter';
+import { Shake, Sparks } from './fx';
 import { CORNERS, type ArenaEvent, type Corner, type TickResult } from '@/lib/types';
 
 /** Everything the HUD needs, emitted when a tick's animation actually begins. */
@@ -29,10 +31,17 @@ export interface RendererOptions {
   onHud?: (snapshot: HudSnapshot) => void;
 }
 
+/** Corner identity, shared with globals.css (`--a` / `--b`). Cyan diagnostic vs.
+ *  hazard red — legible side by side and distinguishable at phone size. Colour is
+ *  never the only cue: the HUD labels every corner and the sides never swap. */
 const CORNER_COLOR: Record<Corner, number> = {
-  agent_a: 0x4da3ff,
-  agent_b: 0xff6161,
+  agent_a: 0x29e0ff,
+  agent_b: 0xff5a3c,
 };
+
+/** Warning amber. The repeat cap's colour everywhere: clip flash, spark, HUD pip. */
+const VOID_COLOR = 0xffb020;
+const STEEL = 0x0a0e13;
 
 /** Half the gap between the fighters, in metres. Tuned against tools/pose_check.py:
  *  a jab puts the fist 0.67 m in front of the model origin, and a torso is ~0.15 m
@@ -49,6 +58,10 @@ export class ArenaRenderer {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly fighters: Record<Corner, Fighter>;
   private readonly observer: ResizeObserver | null = null;
+  private readonly sparks = new Sparks();
+  private readonly shake = new Shake();
+  private readonly cameraHome = new THREE.Vector3();
+  private readonly lookAt = new THREE.Vector3(0, 1.02, 0);
 
   private queue: TickResult[] = [];
   private currentTick: TickResult | null = null;
@@ -69,9 +82,13 @@ export class ArenaRenderer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // ACES keeps the emissive rims and the spark bursts from clipping to white
+    // flat, which is what makes hot accents read as hot rather than as blown out.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
 
-    this.scene.background = new THREE.Color(0x0a0d12);
-    this.scene.fog = new THREE.Fog(0x0a0d12, 6, 16);
+    this.scene.background = new THREE.Color(0x05070a);
+    this.scene.fog = new THREE.Fog(0x05070a, 5.5, 15);
 
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 60);
 
@@ -82,10 +99,11 @@ export class ArenaRenderer {
     fighterB.group.position.set(HALF_GAP, 0, 0);
     fighterB.group.rotation.y = -Math.PI / 2;
 
-    tint(fighterA.group, CORNER_COLOR.agent_a);
-    tint(fighterB.group, CORNER_COLOR.agent_b);
+    fighterA.skin(CORNER_COLOR.agent_a);
+    fighterB.skin(CORNER_COLOR.agent_b);
 
     this.scene.add(fighterA.group, fighterB.group);
+    this.scene.add(this.sparks.points);
     this.buildStage();
 
     if (typeof ResizeObserver !== 'undefined') {
@@ -154,6 +172,8 @@ export class ArenaRenderer {
     this.disposed = true;
     cancelAnimationFrame(this.frame);
     this.observer?.disconnect();
+    this.sparks.dispose();
+    this.scene.environment?.dispose();
     for (const corner of CORNERS) this.fighters[corner].dispose();
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
@@ -199,6 +219,11 @@ export class ArenaRenderer {
     }
 
     for (const corner of CORNERS) this.fighters[corner].update(dt);
+
+    this.sparks.update(dt);
+    this.shake.update(dt);
+    this.camera.position.copy(this.cameraHome).add(this.shake.offset);
+    this.camera.lookAt(this.lookAt);
   }
 
   private startTick(tick: TickResult): void {
@@ -210,16 +235,23 @@ export class ArenaRenderer {
       const fighter = this.fighters[corner];
       const events = tick.events ?? [];
 
-      // Clip name IS the action name (skeleton.md) — no mapping table. The two
-      // exceptions are both event-driven, not action-driven:
+      // Clip name IS the action name (skeleton.md) — no mapping table. The three
+      // exceptions are all event-driven, not action-driven:
+      //   void     : the repeat cap stripped the action (spec 4.6). `moves` still
+      //              reports the submitted action, but the punch never happened, so
+      //              the strike clip must NOT play — the jam clip plays instead.
       //   exhausted: the action was unaffordable and became idle (spec 3), so the
       //              tell belongs to the event, not to whatever `moves` reports.
       //   no_move  : nothing was submitted (spec 4.4) — the fighter just stands.
+      const voided = events.some((e) => e.type === 'void' && e.who === corner);
       const exhausted = events.some((e) => e.type === 'exhausted' && e.who === corner);
       const noMove = events.some((e) => e.type === 'no_move' && e.who === corner);
       const move = tick.moves?.[corner];
 
-      if (exhausted) fighter.enqueue('exhausted');
+      // Spec 4.6: at most one of no_move / void / exhausted fires per fighter per
+      // tick. Ordered anyway so a server that ever emitted two could not stack clips.
+      if (voided) fighter.enqueue('void');
+      else if (exhausted) fighter.enqueue('exhausted');
       else if (!noMove && move) fighter.enqueue(move);
 
       if (!rushing) {
@@ -240,6 +272,8 @@ export class ArenaRenderer {
       }
     }
 
+    this.playImpacts(tick.events ?? []);
+
     this.onHud?.({
       tick: tick.tick,
       state: tick.state,
@@ -250,67 +284,175 @@ export class ArenaRenderer {
     });
   }
 
+  /**
+   * Impact feedback, once per tick over the whole event list — not per corner, or a
+   * two-corner loop would fire each burst twice. Every branch is a spark burst, an
+   * emissive pulse on a body, a camera jolt, or some combination; none of them
+   * allocate geometry or touch the clip queue.
+   */
+  private playImpacts(events: ArenaEvent[]): void {
+    for (const event of events) {
+      switch (event.type) {
+        case 'hit': {
+          this.sparks.burst(
+            this.contact(event.defender, 1.3),
+            0xffe6b0,
+            10 + Math.round(event.damage * 0.7),
+            1.5 + event.damage * 0.07,
+          );
+          // Capped below 1 so a hard hook still leaves the corner's own colour
+          // readable through the flash — the flash must not erase the identity.
+          this.fighters[event.defender].pulse(0xffffff, Math.min(0.72, 0.3 + event.damage / 26));
+          this.shake.hit(0.006 + event.damage * 0.0022);
+          break;
+        }
+        case 'blocked':
+          // The guard holds: a short cold spark off the blocking arm, no shake worth
+          // the name. Visibly different from taking the punch.
+          this.sparks.burst(this.contact(event.defender, 1.36), CORNER_COLOR[event.defender], 8, 1.4);
+          this.fighters[event.defender].pulse(CORNER_COLOR[event.defender], 0.6);
+          this.shake.hit(0.004);
+          break;
+        case 'dodged':
+          this.fighters[event.defender].pulse(0x8affd0, 0.45);
+          if ((event.riposte ?? 0) > 0) {
+            this.sparks.burst(this.contact(event.attacker, 1.24), 0x8affd0, 8, 1.5);
+            this.shake.hit(0.006);
+          }
+          break;
+        case 'void':
+          // Amber, low and close to the body: the machine jamming, not a landed blow.
+          this.sparks.burst(this.contact(event.who, 1.14), VOID_COLOR, 7, 1);
+          // Same cap as the hit flash: a warning wash over the chassis, not a repaint.
+          // At full strength the fighter turns solid amber and stops being its corner.
+          this.fighters[event.who].pulse(VOID_COLOR, 0.45);
+          break;
+        case 'ko':
+          this.sparks.burst(this.contact(event.who, 1.22), 0xffffff, 26, 3);
+          this.shake.hit(0.09);
+          break;
+      }
+    }
+  }
+
+  /** The point where a punch aimed at `corner` arrives — between the two fighters,
+   *  biased to the receiving side, at roughly chin height. */
+  private contact(corner: Corner, height: number): THREE.Vector3 {
+    return new THREE.Vector3((corner === 'agent_a' ? -1 : 1) * HALF_GAP * 0.55, height, 0);
+  }
+
   /* ------------------------------------------------------------- stage */
 
   private buildStage(): void {
-    const hemi = new THREE.HemisphereLight(0x9dc4ff, 0x14181f, 1.1);
-    this.scene.add(hemi);
+    // A metal fighter with nothing to reflect renders black. A one-off PMREM of the
+    // built-in room gives the chassis something to catch without shipping an HDR.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.5;
+    pmrem.dispose();
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
-    key.position.set(2.5, 5, 3.5);
-    this.scene.add(key);
+    this.scene.add(new THREE.HemisphereLight(0x8fb4d8, 0x05070a, 0.5));
 
-    const rim = new THREE.DirectionalLight(0x7fb0ff, 1.1);
-    rim.position.set(-3, 2.5, -3);
-    this.scene.add(rim);
+    // Hard overhead key: this is a machine under a work light, so the falloff is
+    // steep and the shadows on the chassis are allowed to go properly dark.
+    const key = new THREE.SpotLight(0xffffff, 90, 12, 0.72, 0.45, 1.6);
+    key.position.set(0.6, 5.2, 2.2);
+    key.target.position.set(0, 1, 0);
+    this.scene.add(key, key.target);
 
-    const canvasMat = new THREE.MeshStandardMaterial({
-      color: 0x1b2431,
-      roughness: 0.95,
-      metalness: 0,
-    });
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.14, 4.4), canvasMat);
-    floor.position.y = -0.07;
-    this.scene.add(floor);
+    // One rim per corner, in that corner's colour, raking from behind. This is what
+    // separates the two silhouettes from the dark and from each other.
+    for (const corner of CORNERS) {
+      const side = corner === 'agent_a' ? -1 : 1;
+      const rim = new THREE.DirectionalLight(CORNER_COLOR[corner], 1.7);
+      rim.position.set(side * 4, 2.2, -3.2);
+      this.scene.add(rim);
+    }
+
+    // Deck: dark plate, machined grid, hazard chevrons on the two corner ends.
+    const deck = new THREE.Mesh(
+      new THREE.BoxGeometry(4.4, 0.14, 4.4),
+      new THREE.MeshStandardMaterial({ color: 0x11161d, roughness: 0.55, metalness: 0.75 }),
+    );
+    deck.position.y = -0.07;
+    this.scene.add(deck);
+
+    const markings = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.4, 4.4),
+      new THREE.MeshBasicMaterial({
+        map: deckTexture(),
+        transparent: true,
+        depthWrite: false,
+      }),
+    );
+    markings.rotation.x = -Math.PI / 2;
+    markings.position.y = 0.002;
+    this.scene.add(markings);
 
     const apron = new THREE.Mesh(
-      new THREE.BoxGeometry(4.8, 0.1, 4.8),
-      new THREE.MeshStandardMaterial({ color: 0x0f151d, roughness: 1 }),
+      new THREE.BoxGeometry(5.2, 0.1, 5.2),
+      new THREE.MeshStandardMaterial({ color: 0x070a0e, roughness: 0.9, metalness: 0.4 }),
     );
     apron.position.y = -0.16;
     this.scene.add(apron);
 
-    // Ring posts and ropes on three sides — the camera side is left open so the
-    // fight is never watched through a rope.
-    const postMat = new THREE.MeshStandardMaterial({ color: 0x2a3646, roughness: 0.6 });
-    const ropeMat = new THREE.MeshStandardMaterial({ color: 0xd8dee9, roughness: 0.5 });
+    // Cage frame on three sides — the camera side is left open so the fight is never
+    // watched through a cable. Steel uprights capped with the corner's own colour.
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: STEEL,
+      roughness: 0.42,
+      metalness: 0.95,
+    });
+    const cableMat = new THREE.MeshStandardMaterial({
+      color: 0x39434f,
+      roughness: 0.35,
+      metalness: 1,
+    });
     const half = 2.1;
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        const post = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.05, 0.05, 1.5, 12),
-          postMat,
-        );
-        post.position.set(sx * half, 0.75, sz * half);
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.6, 0.11), frameMat);
+        post.position.set(sx * half, 0.8, sz * half);
         this.scene.add(post);
+
+        const cap = new THREE.Mesh(
+          new THREE.BoxGeometry(0.15, 0.06, 0.15),
+          new THREE.MeshStandardMaterial({
+            color: 0x000000,
+            emissive: CORNER_COLOR[sx < 0 ? 'agent_a' : 'agent_b'],
+            emissiveIntensity: 2.4,
+            roughness: 0.4,
+          }),
+        );
+        cap.position.set(sx * half, 1.63, sz * half);
+        this.scene.add(cap);
       }
     }
-    for (const y of [0.45, 0.85, 1.25]) {
-      const back = new THREE.Mesh(
-        new THREE.BoxGeometry(half * 2, 0.035, 0.035),
-        ropeMat,
-      );
+    for (const y of [0.45, 0.9, 1.35]) {
+      const back = new THREE.Mesh(new THREE.BoxGeometry(half * 2, 0.03, 0.03), cableMat);
       back.position.set(0, y, -half);
       this.scene.add(back);
       for (const sx of [-1, 1]) {
-        const side = new THREE.Mesh(
-          new THREE.BoxGeometry(0.035, 0.035, half * 2),
-          ropeMat,
-        );
+        const side = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, half * 2), cableMat);
         side.position.set(sx * half, y, 0);
         this.scene.add(side);
       }
     }
+
+    // Backdrop: a dim service grid that the fog eats before it competes with the
+    // fighters, so the stage has depth without anything to read in it.
+    const backdrop = new THREE.Mesh(
+      new THREE.PlaneGeometry(16, 7),
+      new THREE.MeshBasicMaterial({
+        map: gridTexture(),
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        fog: true,
+      }),
+    );
+    backdrop.position.set(0, 2.6, -5.4);
+    this.scene.add(backdrop);
 
     const shadowTexture = contactShadowTexture();
     for (const corner of CORNERS) {
@@ -319,7 +461,7 @@ export class ArenaRenderer {
         new THREE.MeshBasicMaterial({
           map: shadowTexture,
           transparent: true,
-          opacity: 0.55,
+          opacity: 0.7,
           depthWrite: false,
         }),
       );
@@ -345,23 +487,93 @@ export class ArenaRenderer {
     const needWidth = 2.5 / 2 / Math.tan(vFov / 2) / Math.max(aspect, 0.35);
     const distance = Math.max(needHeight, needWidth) * 1.04;
 
-    this.camera.position.set(0, 1.35, distance);
-    this.camera.lookAt(0, 1.02, 0);
+    // The framed position is the home the shake displaces from; `step` writes the
+    // camera every frame, so nothing here may set position directly.
+    this.cameraHome.set(0, 1.35, distance);
+    this.camera.position.copy(this.cameraHome).add(this.shake.offset);
+    this.camera.lookAt(this.lookAt);
     this.camera.updateProjectionMatrix();
   }
 }
 
-function tint(root: THREE.Object3D, color: number): void {
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const source = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-    const material = (source as THREE.MeshStandardMaterial).clone();
-    material.color = new THREE.Color(color);
-    material.roughness = 0.62;
-    material.metalness = 0.05;
-    mesh.material = material;
-  });
+/** Deck markings: machined grid, centre ring, and a hazard band under each corner. */
+function deckTexture(): THREE.Texture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.clearRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(120, 155, 185, 0.14)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 16; i++) {
+    const p = (i / 16) * size;
+    ctx.beginPath();
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, size);
+    ctx.moveTo(0, p);
+    ctx.lineTo(size, p);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(160, 195, 225, 0.3)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.055, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // The two corner bands. The texture's X axis runs along the fighters' axis, so
+  // the left band sits under agent_a and the right one under agent_b.
+  const bands: [number, string][] = [
+    [0, '#29e0ff'],
+    [size - size * 0.11, '#ff5a3c'],
+  ];
+  for (const [x, color] of bands) {
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.5;
+    ctx.fillRect(x, size * 0.18, size * 0.11, size * 0.64);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
+    for (let y = size * 0.18; y < size * 0.82; y += 26) {
+      ctx.fillRect(x, y, size * 0.11, 13);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+/** A dim service grid for the backdrop wall. */
+function gridTexture(): THREE.Texture {
+  const w = 256;
+  const h = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(110, 145, 180, 0.34)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= w; x += 16) {
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, 0);
+    ctx.lineTo(x + 0.5, h);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= h; y += 16) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(w, y + 0.5);
+    ctx.stroke();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
 function contactShadowTexture(): THREE.Texture {

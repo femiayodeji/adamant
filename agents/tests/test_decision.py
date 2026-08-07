@@ -15,7 +15,11 @@ from agents.common.decision import (
     make_decider,
     parse_reply,
 )
-from agents.common.rules import FALLBACK_ACTION
+from agents.common.rules import (
+    FALLBACK_ACTION,
+    FALLBACK_ALTERNATE,
+    MAX_CONSECUTIVE_REPEATS,
+)
 
 STATE = {
     "tick": 7,
@@ -24,6 +28,11 @@ STATE = {
     "opponent": {"hp": 100, "stamina": 100, "points": 0, "penalties": 0},
     "history": [],
 }
+
+
+def state_with_streak(action, streak):
+    """A state_update whose `self` block reports an in-progress repeat streak."""
+    return {**STATE, "self": {**STATE["self"], "last_action": action, "repeat_streak": streak}}
 
 
 def _reply(action="hook", reason="trading into the jab"):
@@ -138,3 +147,82 @@ async def test_make_decider_matches_the_run_match_signature():
     decider = make_decider(stub_model(_reply("dodge_left")))
     decision = await decider(STATE, "Jab-bot", 400, 60)
     assert decision.action == "dodge_left"
+
+
+@pytest.mark.asyncio
+async def test_make_decider_pins_a_system_prompt_for_the_whole_match():
+    seen = []
+
+    async def model_call(system, user, deadline_ms):
+        seen.append(system)
+        return _reply(), 1, 1
+
+    await make_decider(model_call, system="PERSONA SYSTEM")(STATE, None, 400, 60)
+    assert seen == ["PERSONA SYSTEM"]
+
+
+# --- the hedge under the repetition cap ------------------------------------
+#
+# A fallback pinned to one action fires on consecutive ticks by construction --
+# a slow model is slow repeatedly. At the cap that hedge would be voided and
+# leave the agent defenceless, which is the opposite of hedging.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streak", range(MAX_CONSECUTIVE_REPEATS))
+async def test_below_the_cap_the_hedge_is_the_documented_block_high(streak):
+    state = state_with_streak(FALLBACK_ACTION, streak)
+    decision = await decide(stub_model("garbage"), state, None, 400)
+    assert (decision.action, decision.fallback) == (FALLBACK_ACTION, True)
+
+
+@pytest.mark.asyncio
+async def test_at_the_cap_the_hedge_steps_sideways_instead_of_voiding():
+    state = state_with_streak(FALLBACK_ACTION, MAX_CONSECUTIVE_REPEATS)
+    decision = await decide(stub_model(_reply(), delay=5.0), state, None, 400)
+    assert (decision.action, decision.fallback) == (FALLBACK_ALTERNATE, True)
+    assert decision.latency_ms < 400, "the sidestep must not cost the deadline"
+
+
+@pytest.mark.asyncio
+async def test_the_sidestep_itself_can_never_void():
+    """The other block is only reached when block_high is capped, and a fighter
+    has one last_action, so the two can never both be capped."""
+    state = state_with_streak(FALLBACK_ALTERNATE, MAX_CONSECUTIVE_REPEATS + 4)
+    decision = await decide(stub_model("garbage"), state, None, 400)
+    assert decision.action == FALLBACK_ACTION
+
+
+@pytest.mark.asyncio
+async def test_a_run_of_hedges_alternates_rather_than_repeating_forever():
+    """Simulate the streak the platform would report back across six dead ticks."""
+    last, streak, played = None, 0, []
+    for _ in range(6):
+        decision = await decide(
+            stub_model("garbage"), state_with_streak(last, streak), None, 400
+        )
+        played.append(decision.action)
+        streak = streak + 1 if decision.action == last else 1
+        last = decision.action
+        assert streak <= MAX_CONSECUTIVE_REPEATS, f"voided after {played}"
+    assert played == [FALLBACK_ACTION] * 3 + [FALLBACK_ALTERNATE] + [FALLBACK_ACTION] * 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("me", [{}, {"last_action": None, "repeat_streak": None},
+                                {"last_action": "block_high", "repeat_streak": "lots"}])
+async def test_a_state_without_usable_streak_fields_still_hedges(me):
+    """Old or odd state must never turn a hedge into an exception, which would
+    become a no-move -- the one outcome worse than any action."""
+    decision = await decide(stub_model("garbage"), {**STATE, "self": me}, None, 400)
+    assert decision.action in (FALLBACK_ACTION, FALLBACK_ALTERNATE)
+    assert decision.fallback is True
+
+
+@pytest.mark.asyncio
+async def test_an_action_the_model_chose_is_never_silently_repaired():
+    """Only the hedge is overridden. A model that walks into the cap must be
+    recorded doing it -- repairing it would launder the thing being measured."""
+    state = state_with_streak("jab", MAX_CONSECUTIVE_REPEATS)
+    decision = await decide(stub_model(_reply("jab")), state, None, 400)
+    assert (decision.action, decision.fallback) == ("jab", False)

@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 
 from .prompt import SYSTEM_PROMPT, build_user_prompt
-from .rules import ACTIONS, FALLBACK_ACTION
+from .rules import ACTIONS, fallback_action
 
 #: Fraction of ``deadline_ms`` the model call is allowed to take (spec 10).
 #: The remainder covers prompt building, parsing, and the trip back to the
@@ -83,30 +83,42 @@ async def decide(
     opponent_name: str | None = None,
     deadline_ms: int | None = None,
     max_ticks: int | None = None,
+    system: str | None = None,
 ) -> Decision:
     """Always return a valid action, within roughly 70% of the deadline.
 
-    On timeout or on a reply we cannot parse, hedge with ``block_high`` and set
+    On timeout or on a reply we cannot parse, hedge and set
     ``telemetry.fallback = true`` so the log records that the action came from a
     local default rather than a finished decision.
+
+    The hedge is ``block_high``, *unless* playing it would be the 4th consecutive
+    repeat -- a fallback that fires on four ticks running would then be voided and
+    leave us defenseless, which is the opposite of hedging. ``fallback_action``
+    reads the streak off ``state.self`` and steps sideways to ``block_low``.
+
+    A hedge is the only action this function overrides. An action the model
+    *chose* is sent as-is even when it will void: the prompt states the cap, and
+    silently repairing a bad choice would launder the very thing being measured.
     """
     deadline_ms = deadline_ms or state.get("deadline_ms") or 5000
     user = build_user_prompt(state, opponent_name, max_ticks)
+    hedge = fallback_action(state.get("self"))
     started = time.perf_counter()
     tokens_in = tokens_out = 0
     try:
         text, tokens_in, tokens_out = await asyncio.wait_for(
-            model_call(SYSTEM_PROMPT, user, deadline_ms), budget_seconds(deadline_ms)
+            model_call(system or SYSTEM_PROMPT, user, deadline_ms),
+            budget_seconds(deadline_ms),
         )
         action, reason = parse_reply(text)
         fallback = False
     except asyncio.TimeoutError:
-        action, reason, fallback = FALLBACK_ACTION, "fallback: model call timed out", True
+        action, reason, fallback = hedge, "fallback: model call timed out", True
     except ReplyError as exc:
-        action, reason, fallback = FALLBACK_ACTION, f"fallback: bad reply ({exc})", True
+        action, reason, fallback = hedge, f"fallback: bad reply ({exc})", True
     except Exception as exc:  # transport error, rate limit, anything else
         action, reason, fallback = (
-            FALLBACK_ACTION,
+            hedge,
             f"fallback: {type(exc).__name__}: {exc}",
             True,
         )
@@ -121,10 +133,15 @@ async def decide(
     )
 
 
-def make_decider(model_call):
-    """Adapt a model client into the ``decide`` callable ``run_match`` expects."""
+def make_decider(model_call, system: str | None = None):
+    """Adapt a model client into the ``decide`` callable ``run_match`` expects.
+
+    ``system`` pins the system prompt for the whole match -- that is how a persona
+    reaches the model (``agents/common/personas.py``). ``None`` is the neutral
+    prompt.
+    """
 
     async def agent_decide(state, opponent_name=None, deadline_ms=None, max_ticks=None):
-        return await decide(model_call, state, opponent_name, deadline_ms, max_ticks)
+        return await decide(model_call, state, opponent_name, deadline_ms, max_ticks, system)
 
     return agent_decide

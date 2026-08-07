@@ -544,3 +544,37 @@ It remains true that a live `OPENROUTER_API_KEY` sits in the working tree. The r
 ## Bottom line
 
 The plan is ready to build against. The spec is one editing pass away from being ready for someone *else* to build against — and that gap, not the code, is the current critical path. Separately: `statics/index.html` is still 0 bytes, so the frontend entrypoint is a placeholder rather than a starting point.
+
+---
+
+# Rules change — repetition cap (2026-08-07)
+
+_Not a documentation review. A combat rule was added at the user's request; this records the decisions taken so they are not re-litigated. Applied in `arena_spec.md` **v0.6** §4.6 (plus §1, §2, §3, §4.1, §4.2, §4.5, §5, §6.2, §7, §9, §10, §11, §13) and `plan.md` Build Status._
+
+**The rule.** A fighter may submit the same action at most **3 times consecutively**; the 4th and every further consecutive repeat is **void** — stripped to nothing, defenceless for that tick, stamina still paid, no penalty.
+
+**Why.** One action could otherwise be an entire strategy. Predicting the opponent is the skill this platform exists to measure, and an agent that picks one move and holds it sidesteps it completely — there is nothing to read and nothing being read. The cap is a floor on how much variety a fight contains: at minimum, every fourth tick is a real decision.
+
+### Decisions taken
+
+| Decision | Chosen | Rejected, and why |
+|---|---|---|
+| Where the cap bites | **4th+ consecutive repeat is void** | 3rd+ — forces a change every other tick, which is a metronome rather than a constraint, and breaks the `cycle-3` ladder bot |
+| What a void does | **Whiffs: stamina paid, no effect, no penalty** | *Converted to `idle`* — rewards spam with the +20 regen, a perverse incentive. *Treated as a no-move* — folds "this agent spams" and "this agent went silent" into one number; they are different findings, and the log has to tell them apart |
+| Does a void extend the streak | **Yes** | Resetting on a void makes the cap self-clearing: the same action forever, losing only every fourth tick. That is a rate limit, not a cap |
+| What the streak counts | **The submitted action** | The *effective* action — an `exhausted` conversion to `idle` would then silently launder a streak, and `tick_result.moves` already stores submissions for the same reason |
+| Ordering vs. affordability | **Repeat check first; a void never also reports `exhausted`** | Affordability first would let a fighter dodge the cap by running its stamina down |
+| Where streak state lives | **In fighter state, on the wire** (`last_action`, `repeat_streak`) | Leaving agents to derive it from `history` — a rule that depends on the past would then break §1's stateless-by-design promise, which pause/resume relies on |
+| Built-in bots | **Repeat-aware** — each resets its streak rather than voiding | Leaving them to void out: Jab-bot is a designed trap, and a trap that stops punching after three ticks probes nothing. `ConstantBot` in the balance round-robin is deliberately exempt — its voiding *is* the measurement |
+
+### Consequence: the published balance figures moved
+
+They are asserted as tests (`test_balance.py`, `test_server.py`), so this was deliberate and re-derived from `python -m server.engine.simulate`, not hand-edited.
+
+- **The trap survived and sharpened.** `mostly-block_high` vs Jab-bot is still the 0–0 draw at tick 60 — the lesson that blocking correctly is not winning is intact. But a *literal* always-`block_high` is now knocked out at tick 30: the naive answer went from drawing to losing.
+- **The tick-28 KO is unchanged.** Hook-every-4th never repeats four times running, so the cap does not touch it. The margin widened (100/-5 HP rather than 65/0) because Jab-bot now spends every fourth tick blocking.
+- **Riposte 5 stays justified.** `mostly-dodge_right` still KOs Jab-bot, at tick 26 rather than 20.
+
+### Left open
+
+Whether the cap shifts the *mixed*-strategy equilibrium. It has been checked only against the bot ladder, where it behaves as designed. A near-equilibrium mixer repeats by chance rarely enough that it should not matter, but that is reasoning, not measurement — it needs real agents, alongside the aggression question that was already open.

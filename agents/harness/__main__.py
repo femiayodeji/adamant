@@ -12,6 +12,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from ..common.personas import PERSONA_KEYS
 from .aggregate import aggregate, require_single_bracket, summarise_exclusions
 from .analyze import analyze_logs, exploitation_speed, no_move_breakdown
 from .model_client import LiteLLMClient, ModelSpec
@@ -49,7 +50,7 @@ def cmd_run(args) -> int:
     runner = ArenaRunner(
         ArenaEndpoints(args.http_url, args.ws_url),
         make_client=lambda spec: LiteLLMClient(
-            ModelSpec(model=spec.entrant, temperature=temperature)
+            ModelSpec(model=spec.entrant, temperature=temperature, persona=args.persona)
         ),
     )
     rows = asyncio.run(run_batch(specs, runner.run_one, concurrency=args.concurrency))
@@ -96,6 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-ticks", type=int, default=60)
     run.add_argument("--concurrency", type=int, default=4)
     run.add_argument("--temperature", default="0")
+    run.add_argument(
+        "--persona",
+        default=None,
+        choices=PERSONA_KEYS,
+        help="fighting style for every entrant; default neutral, so a model "
+        "comparison is not confounded by a second changed variable",
+    )
     run.add_argument("--http-url", required=True)
     run.add_argument("--ws-url", required=True)
     run.add_argument("--out", default="agents/harness/results.csv")

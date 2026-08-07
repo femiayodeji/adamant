@@ -53,6 +53,34 @@ class Strategy:
         """
         return action if self._affordable(ctx, action) else IDLE
 
+    def _would_void(self, ctx: Context, action: str) -> bool:
+        """True if submitting `action` now would be the 4th+ consecutive repeat and
+        therefore be stripped to nothing (spec §4.6).
+
+        Read straight off `state_update.self`, which carries `last_action` and
+        `repeat_streak` for exactly this purpose — no bot keeps local state.
+        """
+        me = ctx.get("self", {})
+        return (
+            me.get("last_action") == action
+            and int(me.get("repeat_streak", 0)) >= rules.MAX_CONSECUTIVE_REPEATS
+        )
+
+    def _respecting_cap(self, ctx: Context, action: str) -> str:
+        """`action`, or a filler that resets the streak when it would void.
+
+        Every ladder bot routes its choice through here. A bot that voided out
+        would stop probing the thing it exists to probe — Jab-bot in particular is
+        a designed trap, not a punching bag (spec §11), and a trap that stops
+        punching teaches nothing. `ConstantBot` deliberately does *not* use this:
+        the balance round-robin's whole job is to report what a genuinely pure
+        strategy is worth, and under this rule the honest answer is "it voids out".
+        """
+        if not self._would_void(ctx, action):
+            return action
+        filler = IDLE if action == "block_high" else "block_high"
+        return self._or_idle(ctx, filler)
+
 
 class RandomBot(Strategy):
     """Uniform choice over the eight actions. Probes the floor."""
@@ -60,24 +88,30 @@ class RandomBot(Strategy):
     name = "random"
 
     def decide(self, ctx: Context) -> str:
-        return self.rng.choice(rules.ACTIONS)
+        return self._respecting_cap(ctx, self.rng.choice(rules.ACTIONS))
 
 
 class JabBot(Strategy):
-    """Always `jab`. A designed trap, not a punching bag (spec §11).
+    """`jab jab jab block_high`, repeating. A designed trap, not a punching bag
+    (spec §11).
 
-    The obvious answer — always `block_high` — takes zero damage and deals zero:
-    both fighters finish at 100 HP, a draw. Winning requires noticing that `hook`
-    into an incoming `jab` is a trade worth net +10 per exchange.
+    It jabs to the repetition cap and then spends one tick on `block_high` to reset
+    the streak (spec §4.6), because a fourth jab would be voided and a bot that
+    voids out stops probing anything.
 
-    Kept pure: jab costs 5 and passive regen is 5, so stamina never moves and the
-    bot never needs an affordability guard.
+    The trap survives the cap, and sharpens: the obvious answer — always
+    `block_high` — now voids from its own fourth tick onward, leaving the blocker
+    defenceless against the jabs it meant to block. Winning still requires noticing
+    that `hook` into an incoming `jab` is a trade worth net +10 per exchange, and
+    now also requires varying the answer.
+
+    Stamina never binds: jab costs 5, block_high 3, and passive regen is 5.
     """
 
     name = "jab"
 
     def decide(self, ctx: Context) -> str:
-        return "jab"
+        return self._respecting_cap(ctx, "jab")
 
 
 class CycleBot(Strategy):
@@ -104,7 +138,10 @@ class CycleBot(Strategy):
     def decide(self, ctx: Context) -> str:
         # 1-indexed ticks (spec §5), so tick 1 is the first element.
         idx = (int(ctx.get("tick", 1)) - 1) % self.period
-        return self._or_idle(ctx, self.PATTERNS[self.period][idx])
+        # Neither published pattern repeats an action four times in a row, so the
+        # cap never fires here — routed through it anyway so that adding a pattern
+        # cannot silently introduce a bot that voids out.
+        return self._respecting_cap(ctx, self._or_idle(ctx, self.PATTERNS[self.period][idx]))
 
 
 class FrequencyBot(Strategy):
@@ -124,7 +161,7 @@ class FrequencyBot(Strategy):
                 counts[action] = counts.get(action, 0) + 1
 
         if not counts:
-            return self._or_idle(ctx, "jab")
+            return self._respecting_cap(ctx, self._or_idle(ctx, "jab"))
 
         # Ties broken by ACTIONS order for determinism, not by dict insertion.
         top = max(rules.ACTIONS, key=lambda a: (counts.get(a, 0), -rules.ACTIONS.index(a)))
@@ -134,22 +171,26 @@ class FrequencyBot(Strategy):
             dodges = [d for d in DEFENSES if rules.counters(d, top) and rules.riposte_of(d)]
             blocks = [d for d in DEFENSES if rules.counters(d, top) and not rules.riposte_of(d)]
             for candidate in dodges + blocks:
-                if self._affordable(ctx, candidate):
+                if self._affordable(ctx, candidate) and not self._would_void(ctx, candidate):
                     return candidate
-            return IDLE
+            return self._respecting_cap(ctx, IDLE)
 
         if rules.is_defense(top):
             # Throw the hardest attack that this defense does not counter.
             for attack in ("hook", "cross", "jab"):
-                if not rules.counters(top, attack) and self._affordable(ctx, attack):
+                if (
+                    not rules.counters(top, attack)
+                    and self._affordable(ctx, attack)
+                    and not self._would_void(ctx, attack)
+                ):
                     return attack
-            return IDLE
+            return self._respecting_cap(ctx, IDLE)
 
         # Opponent idles a lot: hit it as hard as stamina allows.
         for attack in ("hook", "cross", "jab"):
-            if self._affordable(ctx, attack):
+            if self._affordable(ctx, attack) and not self._would_void(ctx, attack):
                 return attack
-        return IDLE
+        return self._respecting_cap(ctx, IDLE)
 
 
 class MixerBot(Strategy):
@@ -175,14 +216,20 @@ class MixerBot(Strategy):
         actions = list(self.WEIGHTS)
         weights = [self.WEIGHTS[a] for a in actions]
         choice = self.rng.choices(actions, weights=weights, k=1)[0]
-        return self._or_idle(ctx, choice)
+        return self._respecting_cap(ctx, self._or_idle(ctx, choice))
 
 
 # ─── Fixed strategies used by the Phase 1 balance simulation ───
 
 
 class ConstantBot(Strategy):
-    """Always the same action. The pure-strategy corner of the round-robin."""
+    """Always the same action. The pure-strategy corner of the round-robin.
+
+    Deliberately *not* repeat-aware: the round-robin exists to report what a
+    genuinely pure strategy is worth, and under the repetition cap (spec §4.6)
+    the honest answer is that it lands three hits and then voids. Making this
+    bot dodge the cap would hide the very effect the cap was added to produce.
+    """
 
     def __init__(self, action: str, seed: Optional[int] = None) -> None:
         super().__init__(seed)
@@ -193,6 +240,27 @@ class ConstantBot(Strategy):
 
     def decide(self, ctx: Context) -> str:
         return self._or_idle(ctx, self.action)
+
+
+class CappedConstantBot(Strategy):
+    """One action, played as often as the repetition cap allows.
+
+    The honest successor to `ConstantBot` under spec §4.6: three of the action,
+    then one filler to reset the streak, repeating. It is what "a strategy built
+    around one action" now means, and it is the strategy the published figures for
+    `dodge_right` and `dodge_left` are measured with — a pure `ConstantBot` would
+    void out and report the cap's effect rather than the riposte's.
+    """
+
+    def __init__(self, action: str, seed: Optional[int] = None) -> None:
+        super().__init__(seed)
+        if action not in rules.ACTIONS:
+            raise ValueError(f"unknown action: {action!r}")
+        self.action = action
+        self.name = f"mostly-{action}"
+
+    def decide(self, ctx: Context) -> str:
+        return self._respecting_cap(ctx, self._or_idle(ctx, self.action))
 
 
 class HookEveryNthBot(Strategy):

@@ -24,6 +24,7 @@ from typing import Any, Literal, Optional, Union
 from . import rules
 from .rules import (
     IDLE,
+    MAX_CONSECUTIVE_REPEATS,
     NO_MOVE_PENALTY,
     PASSIVE_REGEN,
     IDLE_REGEN_BONUS,
@@ -62,17 +63,27 @@ class Fighter:
     points: int = 0
     penalties: int = 0
 
+    #: The last action this fighter *submitted*, and how many times in a row it has
+    #: now submitted it (spec §4.6). Part of fighter state, and shipped in every
+    #: `state_update`, precisely so an agent can tell that one more repeat would be
+    #: voided without keeping any local state of its own — agents are stateless by
+    #: design (spec §1). `None` at match start and after a no-move.
+    last_action: Optional[str] = None
+    repeat_streak: int = 0
+
     @property
     def decision_score(self) -> int:
         """`points − penalties` (spec §3). May be negative."""
         return self.points - self.penalties
 
-    def as_dict(self) -> dict[str, int]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "hp": self.hp,
             "stamina": self.stamina,
             "points": self.points,
             "penalties": self.penalties,
+            "last_action": self.last_action,
+            "repeat_streak": self.repeat_streak,
         }
 
 
@@ -85,7 +96,7 @@ class MatchState:
     def fighter(self, corner: Corner) -> Fighter:
         return self.agent_a if corner == "agent_a" else self.agent_b
 
-    def as_dict(self) -> dict[str, dict[str, int]]:
+    def as_dict(self) -> dict[str, dict[str, Any]]:
         return {"agent_a": self.agent_a.as_dict(), "agent_b": self.agent_b.as_dict()}
 
 
@@ -106,14 +117,27 @@ def opponent_of(corner: Corner) -> Corner:
     return "agent_b" if corner == "agent_a" else "agent_a"
 
 
+@dataclass(frozen=True)
+class _Normalised:
+    """One fighter's move after steps 1–3 of spec §4.1.
+
+    `effective` is None exactly when the fighter can neither deal damage nor
+    defend — a no-move or a voided repeat. The two differ in what they cost:
+    a no-move spends no stamina and carries a penalty, a void spends the stamina
+    and carries none.
+    """
+
+    effective: Optional[str]  # the action that actually resolves, if any
+    cost: int  # stamina to deduct
+    no_move: bool
+    last_action: Optional[str]  # streak bookkeeping for the next tick
+    streak: int
+
+
 def _normalise(
     move: Move, fighter: Fighter, corner: Corner, events: list[Event]
-) -> tuple[Optional[str], bool]:
-    """Steps 1–2 of spec §4.1.
-
-    Returns `(effective_action, is_no_move)`. `effective_action` is None exactly
-    when the fighter no-moved, which is what makes it defenseless *and* unable to
-    deal damage.
+) -> _Normalised:
+    """Steps 1–3 of spec §4.1: no-move, then the repeat cap, then affordability.
 
     A raw string that is not one of the eight actions is a caller bug: the protocol
     edge is responsible for turning an unknown action name into
@@ -128,7 +152,8 @@ def _normalise(
                 "penalty": NO_MOVE_PENALTY,
             }
         )
-        return None, True
+        # A no-move breaks the streak: there was no submission to repeat.
+        return _Normalised(None, 0, True, None, 0)
 
     if move not in rules.ACTIONS:
         raise ValueError(
@@ -136,7 +161,24 @@ def _normalise(
             f"NoMove('invalid_action') before calling resolve()"
         )
 
+    # The streak counts what was *submitted*, so it is unaffected by whatever the
+    # action later converts to — and a voided repeat still extends it, which is
+    # what stops spamming from being a way out of the cap (spec §4.6).
+    streak = fighter.repeat_streak + 1 if move == fighter.last_action else 1
     cost = rules.stamina_cost(move)
+
+    if streak > MAX_CONSECUTIVE_REPEATS:
+        # Stripped to nothing: deals nothing, defends nothing, never ripostes. The
+        # stamina is still spent, so spam is punished economically rather than by a
+        # penalty — this was a legal move submitted on time, and keeping it out of
+        # `penalties` keeps the no-move statistics meaning only what they say.
+        #
+        # Checked *before* affordability, so a void action never also reports
+        # `exhausted`; the clamp is what keeps stamina non-negative in the rare case
+        # where the repeat was unaffordable anyway.
+        events.append({"type": "void", "who": corner, "action": move, "streak": streak})
+        return _Normalised(None, min(cost, fighter.stamina), False, move, streak)
+
     if cost > fighter.stamina:
         # Legal move, submitted on time, simply unaffordable. Converted to idle
         # *including* the full idle regen, and carrying no penalty (spec §3).
@@ -148,9 +190,9 @@ def _normalise(
                 "stamina": fighter.stamina,
             }
         )
-        return IDLE, False
+        return _Normalised(IDLE, 0, False, move, streak)
 
-    return move, False
+    return _Normalised(move, cost, False, move, streak)
 
 
 def _resolve_attack(
@@ -210,8 +252,9 @@ def _resolve_attack(
 
 
 def _regen(fighter_stamina: int, effective: Optional[str]) -> int:
-    """Step 5 of spec §4.1. A no-move gets the passive regen only — never the idle
-    bonus, even though it looks superficially like standing still."""
+    """Step 6 of spec §4.1. A no-move gets the passive regen only — never the idle
+    bonus, even though it looks superficially like standing still. So does a voided
+    repeat, which is why spamming `idle` past the cap stops paying for itself."""
     regen = PASSIVE_REGEN
     if effective == IDLE:
         regen += IDLE_REGEN_BONUS
@@ -223,22 +266,24 @@ def resolve(
 ) -> tuple[MatchState, list[Event]]:
     """Advance the match by exactly one tick. Pure.
 
-    Events are emitted in order of operations (spec §4.1): `exhausted` and
-    `no_move` conversions first, then attack outcomes in corner order (agent_a's
-    attack, then agent_b's), then any `ko`.
+    Events are emitted in order of operations (spec §4.1): the conversion events
+    (`no_move`, `void`, `exhausted` — at most one per fighter) in corner order,
+    then attack outcomes in corner order (agent_a's attack, then agent_b's), then
+    any `ko`.
     """
     a, b = state.agent_a, state.agent_b
     events: list[Event] = []
 
-    # 1–2. Normalise both moves.
-    eff_a, no_move_a = _normalise(move_a, a, "agent_a", events)
-    eff_b, no_move_b = _normalise(move_b, b, "agent_b", events)
+    # 1–3. Normalise both moves: no-move, repeat cap, affordability.
+    norm_a = _normalise(move_a, a, "agent_a", events)
+    norm_b = _normalise(move_b, b, "agent_b", events)
+    eff_a, eff_b = norm_a.effective, norm_b.effective
 
-    # 3. Deduct stamina. A no-move spends nothing.
-    stam_a = a.stamina - (rules.stamina_cost(eff_a) if eff_a else 0)
-    stam_b = b.stamina - (rules.stamina_cost(eff_b) if eff_b else 0)
+    # 4. Deduct stamina. A no-move spends nothing; a voided repeat spends its cost.
+    stam_a = a.stamina - norm_a.cost
+    stam_b = b.stamina - norm_b.cost
 
-    # 4. Resolve both attacks against the opposing action, including riposte.
+    # 5. Resolve both attacks against the opposing action, including riposte.
     dmg_to_b, riposte_to_a = _resolve_attack("agent_a", eff_a, "agent_b", eff_b, events)
     dmg_to_a, riposte_to_b = _resolve_attack("agent_b", eff_b, "agent_a", eff_a, events)
 
@@ -249,16 +294,20 @@ def resolve(
         hp=a.hp - dmg_to_a - riposte_to_a,
         stamina=_regen(stam_a, eff_a),
         points=a.points + dmg_to_b + riposte_to_b,
-        penalties=a.penalties + (NO_MOVE_PENALTY if no_move_a else 0),
+        penalties=a.penalties + (NO_MOVE_PENALTY if norm_a.no_move else 0),
+        last_action=norm_a.last_action,
+        repeat_streak=norm_a.streak,
     )
     new_b = Fighter(
         hp=b.hp - dmg_to_b - riposte_to_b,
         stamina=_regen(stam_b, eff_b),
         points=b.points + dmg_to_a + riposte_to_a,
-        penalties=b.penalties + (NO_MOVE_PENALTY if no_move_b else 0),
+        penalties=b.penalties + (NO_MOVE_PENALTY if norm_b.no_move else 0),
+        last_action=norm_b.last_action,
+        repeat_streak=norm_b.streak,
     )
 
-    # 6. KO events. Emitted in corner order so a double-KO is deterministic.
+    # 7. KO events. Emitted in corner order so a double-KO is deterministic.
     if new_a.hp <= 0:
         events.append({"type": "ko", "who": "agent_a"})
     if new_b.hp <= 0:

@@ -13,7 +13,9 @@ import pytest
 
 import agents.reference_agent as ref
 from agents.common.decision import budget_seconds, make_decider
-from agents.tests.mock_platform import MockPlatform, running
+from agents.common.personas import PERSONAS, prompt_version
+from agents.common.prompt import PROMPT_VERSION
+from agents.tests.mock_platform import MATCH_END, MockPlatform, running, state_update
 
 
 class FakeMessages:
@@ -54,11 +56,12 @@ class FakeAnthropic:
 def test_profile_is_complete_and_declares_the_prompt_version():
     profile = ref.build_profile("claude-opus-5")
     assert set(profile) == {
-        "model", "provider", "prompt_version", "temperature", "agent_version"
+        "model", "provider", "persona", "prompt_version", "temperature", "agent_version"
     }
     assert profile["model"] == "claude-opus-5"
     assert profile["provider"] == "anthropic"
-    assert profile["prompt_version"] == ref.PROMPT_VERSION
+    assert profile["persona"] is None
+    assert profile["prompt_version"] == PROMPT_VERSION
     assert profile["agent_version"] == ref.AGENT_VERSION
     # claude-opus-5 rejects the parameter, so we report null rather than lie.
     assert profile["temperature"] is None
@@ -128,7 +131,56 @@ async def test_a_chatty_model_becomes_a_logged_hedge_not_a_crash():
         assert move["telemetry"]["fallback"] is True
 
 
+@pytest.mark.asyncio
+async def test_the_published_stack_hedges_around_the_repetition_cap():
+    """Whole stack — Anthropic client, decision loop, socket — against a platform
+    that reports a hedge streak already at the cap. A fallback pinned to
+    block_high would be voided here and stand the agent up defenceless."""
+    client = FakeAnthropic(text="not JSON, so every tick is a hedge")
+    decider = make_decider(ref.make_model_call(client, "claude-opus-5"))
+    platform = MockPlatform(script=[
+        {"type": "match_start", "you": "agent_a", "opponent_name": "Jab-bot", "config": {}},
+        state_update(1, me={"last_action": "block_high", "repeat_streak": 2}),
+        state_update(2, me={"last_action": "block_high", "repeat_streak": 3}),
+        state_update(3, me={"last_action": "block_low", "repeat_streak": 1}),
+        state_update(4, me={"last_action": "block_high", "repeat_streak": 9}),
+        MATCH_END,
+    ])
+
+    async with running(platform) as url:
+        await ref.run_match(url, "R", "RefBot", ref.build_profile("m"), decider)
+
+    assert [m["action"] for m in platform.moves] == [
+        "block_high", "block_low", "block_high", "block_low"
+    ]
+    assert all(m["telemetry"]["fallback"] is True for m in platform.moves)
+
+
 def test_cli_arguments():
     args = ref.parse_args(["--code", "RUMBLE-4F2", "--url", "wss://arena.example.com"])
     assert (args.code, args.url) == ("RUMBLE-4F2", "wss://arena.example.com")
-    assert args.model == ref.DEFAULT_MODEL and args.name == ref.DEFAULT_NAME
+    assert args.model == ref.DEFAULT_MODEL
+    # Both default to "unset" so the persona supplies the identity.
+    assert args.name is None and args.persona is None
+
+
+def test_cli_takes_persona_and_name_overrides():
+    args = ref.parse_args(
+        ["--code", "R", "--url", "ws://x", "--persona", "aggressor", "--name", "MyGuy"]
+    )
+    assert (args.persona, args.name) == ("aggressor", "MyGuy")
+
+
+def test_profile_records_the_persona_and_versions_the_prompt_with_it():
+    """A match fought by the aggressor must say so in its log: profile fields are
+    the one thing that cannot be backfilled."""
+    versions = set()
+    for key, persona in PERSONAS.items():
+        profile = ref.build_profile("claude-opus-5", persona)
+        assert profile["persona"] == key
+        assert profile["prompt_version"] == prompt_version(persona)
+        assert key in profile["prompt_version"]
+        assert profile["prompt_version"] != PROMPT_VERSION, "the persona must version the prompt"
+        json.dumps(profile)  # stored verbatim in the log
+        versions.add(profile["prompt_version"])
+    assert len(versions) == len(PERSONAS), "two personas must not share a prompt version"

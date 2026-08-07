@@ -36,11 +36,14 @@ export function Home({ onOpen }: { onOpen: (code: string) => void }) {
   return (
     <div className="home">
       <div className="hero">
-        <h1>Two agents. Boxing rules. One code.</h1>
+        <h1>
+          Two agents. Boxing rules. <b>One code.</b>
+        </h1>
         <p className="lede">
           Create a match, share the code, and let two LLM agents dial in from anywhere.
           Everyone else just watches.
         </p>
+        <div className="hazard" aria-hidden />
       </div>
 
       <div className="card stack">

@@ -13,12 +13,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, getLog } from '@/lib/api';
-import type { ArenaEvent, Corner, FighterState, MatchLog } from '@/lib/types';
+import {
+  MAX_CONSECUTIVE_REPEATS,
+  type ArenaEvent,
+  type Corner,
+  type FighterState,
+  type MatchLog,
+} from '@/lib/types';
 import type { MatchView } from '@/lib/useMatchFeed';
 import { ArenaRenderer, type HudSnapshot } from '@/renderer/arenaRenderer';
 import type { TickSink } from '@/renderer/tickSink';
 
-const FULL: FighterState = { hp: 100, stamina: 100, points: 0, penalties: 0 };
+const FULL: FighterState = {
+  hp: 100,
+  stamina: 100,
+  points: 0,
+  penalties: 0,
+  last_action: null,
+  repeat_streak: 0,
+};
 const MAX_TICKER = 6;
 
 interface ArenaProps {
@@ -167,10 +180,8 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
             <FighterPanel corner="agent_a" name={names.agent_a} state={state.agent_a} />
             <div className="tickbox">
               <div className="n mono">
-                {hud?.tick ?? 0}
-                <span className="muted" style={{ fontSize: '0.7rem' }}>
-                  /{maxTicks}
-                </span>
+                {String(hud?.tick ?? 0).padStart(2, '0')}
+                <span className="of">/{maxTicks}</span>
               </div>
               <div className="l">tick</div>
             </div>
@@ -178,8 +189,12 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
           </div>
 
           <div className="moves">
-            {hud?.moves.agent_a && <span className="move a mono">{hud.moves.agent_a}</span>}
-            {hud?.moves.agent_b && <span className="move b mono">{hud.moves.agent_b}</span>}
+            {hud?.moves.agent_a && (
+              <MoveChip corner="agent_a" move={hud.moves.agent_a} events={hud.events} />
+            )}
+            {hud?.moves.agent_b && (
+              <MoveChip corner="agent_b" move={hud.moves.agent_b} events={hud.events} />
+            )}
             {replaying && <span className="move mono">replay</span>}
             {(hud?.backlog ?? 0) > 2 && (
               <span className="move mono muted">+{hud?.backlog} queued</span>
@@ -187,11 +202,13 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
           </div>
         </div>
 
+        <Callouts hud={hud} />
+
         {!ready && !loadError && (
           <div className="overlay">
             <div className="box">
               <div className="title">Loading the rig…</div>
-              <small className="hint">xbot.glb, thirteen procedural clips</small>
+              <small className="hint">xbot.glb, fourteen procedural clips</small>
             </div>
           </div>
         )}
@@ -262,19 +279,176 @@ function FighterPanel({
   const side = corner === 'agent_a' ? 'a' : 'b';
   return (
     <div className={`hud-panel ${side}`}>
-      <div className="hud-name">{name}</div>
-      <div className={`bar hp ${side}`}>
-        <span style={{ width: `${clamp(state.hp)}%` }} />
+      <div className="hud-head">
+        <span className={`badge ${side}`} aria-hidden>
+          {side.toUpperCase()}
+        </span>
+        <span className="hud-name">{name}</span>
       </div>
-      <div className="bar stam">
-        <span style={{ width: `${clamp(state.stamina)}%` }} />
-      </div>
+      <Gauge kind="hp" side={side} label="HP" value={state.hp} />
+      <Gauge kind="st" side={side} label="ST" value={state.stamina} />
       <div className="hud-stats mono">
-        <span>hp {Math.max(0, state.hp)}</span>
-        <span>st {Math.max(0, state.stamina)}</span>
-        <span>pts {state.points}</span>
-        {state.penalties > 0 && <span style={{ color: '#ff9a6c' }}>pen {state.penalties}</span>}
+        <span>
+          PTS <b>{state.points}</b>
+        </span>
+        {state.penalties > 0 && (
+          <span className="pen">
+            PEN <b>{state.penalties}</b>
+          </span>
+        )}
+        <StreakPips state={state} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * A notched readout rather than a smooth bar: twenty segments of five points each,
+ * so a spectator can count damage off the gauge. The number is always printed
+ * beside it — the bar is the glance, the digits are the truth.
+ */
+function Gauge({
+  kind,
+  side,
+  label,
+  value,
+}: {
+  kind: 'hp' | 'st';
+  side: 'a' | 'b';
+  label: string;
+  value: number;
+}) {
+  const shown = Math.max(0, Math.round(value));
+  return (
+    <div className="gauge">
+      <span className="g-label mono">{label}</span>
+      <div
+        className={`bar ${kind} ${side}${shown <= 25 ? ' low' : ''}`}
+        role="meter"
+        aria-label={`${label === 'HP' ? 'hit points' : 'stamina'} ${shown} of 100`}
+        aria-valuenow={shown}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <span className="fill" style={{ width: `${clamp(value)}%` }} />
+        <span className="notches" aria-hidden />
+      </div>
+      <span className="g-num mono">{shown}</span>
+    </div>
+  );
+}
+
+/**
+ * The repeat cap made visible (spec 4.6). Three pips fill as the same action is
+ * resubmitted; the third goes hot because the next repeat is the one that voids.
+ * Never colour alone — the count is printed as `n/3`, and a void reads as the word.
+ */
+function StreakPips({ state }: { state: FighterState }) {
+  const cap = MAX_CONSECUTIVE_REPEATS;
+  const streak = state.repeat_streak ?? 0;
+  const action = state.last_action ?? null;
+  const voided = streak > cap;
+  const lit = Math.min(streak, cap);
+  const detail = action ? `${action} x${streak}` : 'no streak';
+
+  return (
+    <span
+      className={`pips${voided ? ' voided' : lit >= cap ? ' hot' : ''}`}
+      title={`Repeat cap ${cap}: ${detail}`}
+    >
+      <span className="pip-label">REP</span>
+      <span className="pip-row" aria-hidden>
+        {Array.from({ length: cap }, (_, i) => (
+          <i key={i} className={`pip${i < lit ? ' on' : ''}`} />
+        ))}
+      </span>
+      <b className="pip-n">
+        {voided ? 'VOID' : `${lit}/${cap}`}
+        <span className="sr-only">{` repeat streak, ${detail}`}</span>
+      </b>
+    </span>
+  );
+}
+
+/** The action chip under the fighters. A voided action is struck through: it was
+ *  submitted, and it did nothing. */
+function MoveChip({
+  corner,
+  move,
+  events,
+}: {
+  corner: Corner;
+  move: string;
+  events: ArenaEvent[];
+}) {
+  const voided = events.some((e) => e.type === 'void' && e.who === corner);
+  const side = corner === 'agent_a' ? 'a' : 'b';
+  return (
+    <span className={`move ${side} mono${voided ? ' voided' : ''}`}>
+      {move}
+      {voided && <em> void</em>}
+    </span>
+  );
+}
+
+interface Callout {
+  key: string;
+  corner: Corner;
+  kind: string;
+  head: string;
+  sub?: string;
+}
+
+/** Per-tick flash text over the canvas, on the side of the fighter it happened to.
+ *  Purely decorative — the event log under the stage carries the same lines as text,
+ *  so this layer is hidden from assistive tech rather than duplicated into it. */
+function Callouts({ hud }: { hud: HudSnapshot | null }) {
+  if (!hud) return null;
+  const rows: Callout[] = [];
+  hud.events.forEach((event, i) => {
+    const at = (corner: Corner, kind: string, head: string, sub?: string) =>
+      rows.push({ key: `${hud.tick}-${i}-${kind}`, corner, kind, head, sub });
+    switch (event.type) {
+      case 'hit':
+        at(event.defender, 'hit', `-${event.damage}`, event.action);
+        break;
+      case 'blocked':
+        at(event.defender, 'blocked', 'BLOCK', event.defense);
+        break;
+      case 'dodged':
+        at(event.defender, 'dodged', 'SLIP', event.riposte ? `riposte ${event.riposte}` : undefined);
+        if (event.riposte) at(event.attacker, 'hit', `-${event.riposte}`, 'riposte');
+        break;
+      case 'void':
+        at(event.who, 'void', 'VOID', `${event.action} x${event.streak} · repeat cap`);
+        break;
+      case 'exhausted':
+        at(event.who, 'exhausted', 'EMPTY', event.attempted);
+        break;
+      case 'no_move':
+        at(event.who, 'no_move', 'NO MOVE', event.cause);
+        break;
+      case 'ko':
+        at(event.who, 'ko', 'DOWN');
+        break;
+    }
+  });
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="callouts" aria-hidden>
+      {(['agent_a', 'agent_b'] as Corner[]).map((corner) => (
+        <div className={`call-col ${corner === 'agent_a' ? 'a' : 'b'}`} key={corner}>
+          {rows
+            .filter((row) => row.corner === corner)
+            .map((row) => (
+              <span className={`call ${row.kind}`} key={row.key}>
+                <b>{row.head}</b>
+                {row.sub && <i className="mono">{row.sub}</i>}
+              </span>
+            ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -349,6 +523,13 @@ function EventLine({
       return (
         <span className="ev-no_move">
           {who(event.who)} made no move ({event.cause}) — penalty {event.penalty}
+        </span>
+      );
+    case 'void':
+      return (
+        <span className="ev-void">
+          {who(event.who)} repeated {event.action} {event.streak}× — voided by the repeat
+          cap, no damage, no defense, stamina still spent
         </span>
       );
     case 'ko':

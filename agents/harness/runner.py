@@ -129,6 +129,7 @@ RESULT_FIELDS = (
     "opponent_kind",
     "deadline_ms",
     "max_ticks",
+    "persona",
     "prompt_version",
     "agent_version",
     "resolved_model",
@@ -162,6 +163,8 @@ RESULT_FIELDS = (
     "no_moves",
     "no_move_rate",
     "no_move_by_cause",
+    "voids",
+    "void_rate",
     "instruction_following_rate",
     "fallback_rate",
     "mean_latency_ms",
@@ -250,7 +253,9 @@ class ArenaRunner:
                 ref,
                 self.name,
                 client.profile(),
-                make_decider(client),
+                # A client that declares a persona pins its system prompt for the
+                # whole match; anything else gets the neutral one.
+                make_decider(client, system=getattr(client, "system_prompt", None)),
             )
         )
         await self._wait_for_corners(ref)

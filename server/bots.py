@@ -48,13 +48,17 @@ class BotClient:
         bot: str,
         seed: Optional[int] = None,
         corner: Optional[str] = None,
+        **options: Any,
     ) -> None:
         self.uri = f"{url.rstrip('/')}/ws/join/{code}"
         self.bot = bot
         self.seed = seed
         self.corner_request = corner
         self.name = f"{bot.capitalize()}-bot"[:24]
-        self.strategy: Strategy = build(bot, seed=seed)
+        self.strategy: Strategy = build(bot, seed=seed, **options)
+        # `cycle` carries its period in its name, so two periods are two entrants
+        # rather than one merged row in any aggregate keyed on bot name.
+        self.name = f"{self.strategy.name.capitalize()}-bot"[:24]
         self.corner: Optional[str] = None
         self.corner_token: Optional[str] = None
         self._ws: Any = None
@@ -122,13 +126,23 @@ class BotClient:
 
 
 async def spawn(
-    url: str, code: str, bot: str, seed: Optional[int] = None, corner: Optional[str] = None
+    url: str,
+    code: str,
+    bot: str,
+    seed: Optional[int] = None,
+    corner: Optional[str] = None,
+    **options: Any,
 ) -> str:
-    """Fill a corner with a ladder bot. Returns the corner it took."""
+    """Fill a corner with a ladder bot. Returns the corner it took.
+
+    `options` are strategy-specific keyword arguments — currently only `period`,
+    which `cycle` needs. Without a route for these, spec §11's period-5 pattern is
+    unreachable from the REST API and half of that ladder rung does not exist.
+    """
     if bot not in LADDER:
         raise ValueError(f"unknown bot {bot!r}")
 
-    client = BotClient(url=url, code=code, bot=bot, seed=seed, corner=corner)
+    client = BotClient(url=url, code=code, bot=bot, seed=seed, corner=corner, **options)
     taken = await client.handshake()
 
     task = asyncio.create_task(client.run(), name=f"bot-{bot}-{code}")

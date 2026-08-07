@@ -139,6 +139,17 @@ async def test_an_unknown_code_is_refused(arena):
     assert (await agent.recv()) == {"type": "error", "reason": "invalid_code"}
 
 
+async def test_a_wrong_first_frame_is_not_reported_as_a_bad_code(arena):
+    """A valid code that opens with the wrong frame used to come back as
+    `invalid_code`, which sends a builder hunting the one thing that is not wrong.
+    The code resolved; the frame did not (spec §6.2)."""
+    created = await arena.create_match()
+    agent = await Agent.connect(arena, created["match_code"])
+    await agent.send({"type": "move", "tick": 1, "action": "jab"})
+
+    assert (await agent.recv()) == {"type": "error", "reason": "expected_join"}
+
+
 async def test_profile_is_required(arena):
     created = await arena.create_match()
     agent = await Agent.connect(arena, created["match_code"])
@@ -196,20 +207,40 @@ async def test_a_full_match_produces_the_documented_message_sequence(arena):
     assert spectator_start["agents"]["agent_a"]["profile"]["agent_version"] == "mock@1.0"
     assert spectator_start["started_at"].endswith("Z")
 
+    # Varied on purpose: four ticks of the same pair would trip the repetition cap
+    # (spec §4.6) and stop being the clean "every attack is blocked" sequence this
+    # test is asserting.
+    exchanges = {
+        1: ("jab", "block_high"),
+        2: ("cross", "block_high"),
+        3: ("hook", "block_low"),
+        4: ("jab", "block_high"),
+    }
+
     for tick in range(1, 5):
         update_a = await a.expect("state_update")
         update_b = await b.expect("state_update")
         assert update_a["tick"] == tick and update_b["tick"] == tick
         assert update_a["deadline_ms"] == 500
         # Egocentric: each agent reads its own corner as "self" (spec §1.1).
-        assert set(update_a["self"]) == {"hp", "stamina", "points", "penalties"}
+        # `last_action` and `repeat_streak` ride along so an agent can see the
+        # repetition cap coming without keeping any state of its own.
+        assert set(update_a["self"]) == {
+            "hp",
+            "stamina",
+            "points",
+            "penalties",
+            "last_action",
+            "repeat_streak",
+        }
 
-        await a.move(tick, "jab")
-        await b.move(tick, "block_high")
+        attack, defense = exchanges[tick]
+        await a.move(tick, attack)
+        await b.move(tick, defense)
 
         result = await spectator.expect("tick_result")
         assert result["tick"] == tick
-        assert result["moves"] == {"agent_a": "jab", "agent_b": "block_high"}
+        assert result["moves"] == {"agent_a": attack, "agent_b": defense}
         assert [e["type"] for e in result["events"]] == ["blocked"]
 
     end_a = await a.expect("match_end")
@@ -371,9 +402,13 @@ async def test_an_unaffordable_move_is_converted_without_penalty(arena):
     for tick in range(1, 13):
         await a.expect("state_update")
         await b.expect("state_update")
-        await a.move(tick, "hook")
-        # block_low counters hook, so nobody is KO'd before the stamina pool runs dry.
-        await b.move(tick, "block_low")
+        # Hook drains 15 against 5 regen, but a fourth consecutive hook would void
+        # before it could ever be unaffordable (spec §4.6 is checked ahead of §3), so
+        # every fourth tick is a cheaper attack that resets the streak.
+        await a.move(tick, "cross" if tick % 4 == 0 else "hook")
+        # Counters whatever is coming, and varies for the same reason, so nobody is
+        # KO'd before the stamina pool runs dry.
+        await b.move(tick, "block_high" if tick % 4 == 0 else "block_low")
         result = await spectator.expect("tick_result", timeout=5)
         found = [e for e in result["events"] if e["type"] == "exhausted"]
         if found:
@@ -388,6 +423,78 @@ async def test_an_unaffordable_move_is_converted_without_penalty(arena):
     await a.close()
     await b.close()
     await spectator.close()
+
+
+# ─── §4.6 repetition cap ───
+
+
+async def test_a_fourth_consecutive_repeat_is_voided_over_the_wire(arena):
+    """The cap is engine behaviour, but agents and spectators have to *see* it, or
+    neither the model nor the renderer can react to it."""
+    created, a, b = await seated_match(arena, deadline_ms=1000, max_ticks=5)
+    spectator = await Spectator.connect(arena, created["match_code"])
+    await arena.start(created["match_code"], created["host_token"])
+    await a.expect("match_start")
+    await b.expect("match_start")
+
+    results = []
+    for tick in range(1, 6):
+        update = await a.expect("state_update")
+        await b.expect("state_update")
+
+        # The streak the agent is told it is on, before it commits to this tick.
+        assert update["self"]["repeat_streak"] == tick - 1
+        assert update["self"]["last_action"] == (None if tick == 1 else "jab")
+
+        await a.move(tick, "jab")
+        # block_low never counters a jab, and varies so only agent_a ever voids.
+        await b.move(tick, "block_low" if tick % 2 else "idle")
+        results.append(await spectator.expect("tick_result", timeout=5))
+
+    landed = [r["tick"] for r in results if any(e["type"] == "hit" for e in r["events"])]
+    voided = [r["tick"] for r in results if any(e["type"] == "void" for e in r["events"])]
+
+    assert landed == [1, 2, 3], "three jabs land, and then the cap shuts the jab down"
+    assert voided == [4, 5]
+
+    event = next(e for e in results[3]["events"] if e["type"] == "void")
+    assert event == {"type": "void", "who": "agent_a", "action": "jab", "streak": 4}
+
+    # A void is a legal move submitted on time: reported as submitted, never
+    # penalised, and never confused with a no-move (spec §4.4 vs §4.6).
+    assert results[3]["moves"]["agent_a"] == "jab", "the submission is what is logged"
+    assert results[3]["state"]["agent_a"]["penalties"] == 0
+    assert not any(e["type"] == "no_move" for r in results for e in r["events"])
+
+    await a.close()
+    await b.close()
+    await spectator.close()
+
+
+async def test_the_repeat_streak_survives_in_the_match_log(arena):
+    """The log is the crash-recovery substrate and the evaluation dataset (§6.4c),
+    so streak state has to be reconstructible from it — a tick judged against the
+    wrong streak would replay to a different result."""
+    created, a, b = await seated_match(arena, deadline_ms=1000, max_ticks=4)
+    await arena.start(created["match_code"], created["host_token"])
+    await a.expect("match_start")
+    await b.expect("match_start")
+
+    for tick in range(1, 5):
+        await a.expect("state_update")
+        await b.expect("state_update")
+        await a.move(tick, "jab")
+        await b.move(tick, "block_low" if tick % 2 else "idle")
+
+    await a.expect("match_end", timeout=5)
+    log = (await arena.get(f"/api/matches/{created['match_code']}/log")).json()
+
+    streaks = [t["state"]["agent_a"]["repeat_streak"] for t in log["ticks"]]
+    assert streaks == [1, 2, 3, 4]
+    assert log["match_end"]["final_state"]["agent_a"]["last_action"] == "jab"
+
+    await a.close()
+    await b.close()
 
 
 # ─── §7 spectator stream ───
@@ -494,7 +601,9 @@ async def test_a_knockout_ends_the_match_immediately(arena):
     # The same figure the headless Phase 1 simulation produces, now over real
     # sockets: the server and the engine must agree exactly.
     assert end["final_tick"] == 28
-    assert end["final_state"]["agent_a"]["hp"] == 65
+    # Unmarked, because Jab-bot spends every fourth tick blocking to reset its own
+    # streak rather than throwing a jab that would void (spec §4.6).
+    assert end["final_state"]["agent_a"]["hp"] == 100
 
     await a.close()
     await b.close()

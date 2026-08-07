@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import bots, matchlog, protocol
 from .engine.resolver import CORNERS
-from .engine.strategies import LADDER
+from .engine.strategies import LADDER, CycleBot
 from .match import LOBBY, LifecycleError, MatchConfig
 from .registry import Registry
 
@@ -191,20 +191,28 @@ async def fill_bot(
     corner = body.get("corner")
     bot = body.get("bot")
     seed = body.get("seed")
+    period = body.get("period")
 
     if corner not in CORNERS:
         raise HTTPException(status_code=422, detail=f"corner must be one of {list(CORNERS)}")
     if bot not in LADDER:
         raise HTTPException(status_code=422, detail=f"bot must be one of {sorted(LADDER)}")
+    if period is not None and bot != "cycle":
+        raise HTTPException(status_code=422, detail="period applies to the `cycle` bot only")
+    if period is not None and period not in CycleBot.PATTERNS:
+        raise HTTPException(
+            status_code=422, detail=f"period must be one of {sorted(CycleBot.PATTERNS)}"
+        )
     if match.status != LOBBY:
         raise HTTPException(status_code=409, detail=f"match is {match.status}")
     if match.corners[corner] is not None:
         raise HTTPException(status_code=409, detail=f"{corner} is already filled")
 
+    options = {"period": period} if period is not None else {}
     taken = await bots.spawn(
-        url=_ws_base(request), code=match.match_code, bot=bot, seed=seed, corner=corner
+        url=_ws_base(request), code=match.match_code, bot=bot, seed=seed, corner=corner, **options
     )
-    return {"corner": taken, "bot": bot, "seed": seed}
+    return {"corner": taken, "bot": bot, "seed": seed, **options}
 
 
 # ─── Agent WebSocket (spec §6) ───
@@ -237,7 +245,10 @@ async def ws_join(websocket: WebSocket, code: str):
                 preferred=first.get("corner"),
             )
         else:
-            raise protocol.JoinError("invalid_code")
+            # Not `invalid_code`: the code resolved fine, the client simply opened
+            # with the wrong frame. Reporting a good code as invalid sends builders
+            # hunting the one thing that is not wrong (spec §6.2).
+            raise protocol.JoinError("expected_join")
     except protocol.JoinError as exc:
         await websocket.send_json(protocol.error(exc.reason))
         await websocket.close()

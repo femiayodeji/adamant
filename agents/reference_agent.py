@@ -9,6 +9,11 @@ actions before the deadline. It keeps no state between ticks -- everything it
 needs arrives in each ``state_update`` -- so a pause and resume is invisible to
 it.
 
+It fights as one of the personas in ``common/personas.py``: a named style that
+varies the display name and the strategic half of the system prompt, and is
+recorded in the profile. Run it twice with the same ``--code`` to fill both
+corners and you get two different fighters; ``--persona aggressor`` picks one.
+
 The rules summary, the prompt, and the decision loop live in ``agents/common/``;
 this file is only the Anthropic client and the wiring. Requires ``anthropic``
 and ``websockets``, and an ``ANTHROPIC_API_KEY`` in the environment.
@@ -26,12 +31,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `common` imports 
 from anthropic import AsyncAnthropic  # noqa: E402
 
 from common.decision import budget_seconds, make_decider  # noqa: E402
-from common.prompt import PROMPT_VERSION  # noqa: E402
+from common.personas import PERSONA_KEYS, Persona, pick_persona, prompt_version  # noqa: E402
+from common.prompt import build_system_prompt  # noqa: E402
 from common.wsloop import run_match  # noqa: E402
 
-AGENT_VERSION = "reference@1.0.0"
+AGENT_VERSION = "reference@1.1.0"
 DEFAULT_MODEL = "claude-opus-5"
-DEFAULT_NAME = "RefBot"
 MAX_TOKENS = 512
 
 #: Below this deadline there is no room to think, so we ask for a fast answer;
@@ -39,12 +44,17 @@ MAX_TOKENS = 512
 DEEP_BRACKET_MS = 15000
 
 
-def build_profile(model: str) -> dict:
-    """Provenance, stored verbatim in the match log (spec 6.1). Required."""
+def build_profile(model: str, persona: Persona | None = None) -> dict:
+    """Provenance, stored verbatim in the match log (spec 6.1). Required.
+
+    The persona is part of this, not a runtime detail: a match fought by the
+    aggressor must say so in its log, or the style is invisible to evaluation.
+    """
     return {
         "model": model,
         "provider": "anthropic",
-        "prompt_version": PROMPT_VERSION,
+        "persona": persona.key if persona else None,
+        "prompt_version": prompt_version(persona),
         # claude-opus-5 rejects `temperature` outright, so this agent never
         # sends one; reported as null rather than as a number we did not pin.
         "temperature": None,
@@ -80,21 +90,32 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ADAM Arena reference agent")
     parser.add_argument("--code", required=True, help="match code, e.g. RUMBLE-4F2")
     parser.add_argument("--url", required=True, help="platform base URL, e.g. wss://host")
-    parser.add_argument("--name", default=DEFAULT_NAME, help="display name, [A-Za-z0-9 _-]{1,24}")
+    parser.add_argument("--name", default=None, help="display name, [A-Za-z0-9 _-]{1,24}")
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--persona",
+        default=None,
+        choices=PERSONA_KEYS,
+        help="fighting style; default: one not already taken for this match code",
+    )
     return parser.parse_args(argv)
 
 
 async def run(args: argparse.Namespace) -> dict | None:
+    persona = pick_persona(args.persona, code=args.code)
+    name = args.name or persona.name
+    print(f"persona {persona.key} fighting as {name}: {persona.tagline}")
     # A retry inside the SDK would silently eat the whole deadline, so: none.
     client = AsyncAnthropic(max_retries=0)
     try:
         return await run_match(
             args.url,
             args.code,
-            args.name,
-            build_profile(args.model),
-            make_decider(make_model_call(client, args.model)),
+            name,
+            build_profile(args.model, persona),
+            make_decider(
+                make_model_call(client, args.model), system=build_system_prompt(persona)
+            ),
             log=print,
         )
     finally:

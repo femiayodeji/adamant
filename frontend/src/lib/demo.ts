@@ -13,15 +13,16 @@
  * confined to this file; nothing in the live path imports it. See SPEC_NOTES.md #7.
  */
 
-import type {
-  ActionName,
-  ArenaEvent,
-  Corner,
-  FighterState,
-  MatchEnd,
-  MatchLog,
-  SpectatorMessage,
-  TickResult,
+import {
+  MAX_CONSECUTIVE_REPEATS,
+  type ActionName,
+  type ArenaEvent,
+  type Corner,
+  type FighterState,
+  type MatchEnd,
+  type MatchLog,
+  type SpectatorMessage,
+  type TickResult,
 } from './types';
 
 const ATTACKS: Record<string, { damage: number; cost: number }> = {
@@ -52,7 +53,7 @@ const cost = (action: string): number =>
   ATTACKS[action]?.cost ?? DEFENSES[action]?.cost ?? 0;
 
 function fresh(): FighterState {
-  return { hp: 100, stamina: 100, points: 0, penalties: 0 };
+  return { hp: 100, stamina: 100, points: 0, penalties: 0, last_action: null, repeat_streak: 0 };
 }
 
 /** Deterministic PRNG so the demo match is the same every time. */
@@ -83,15 +84,34 @@ function resolveTick(
   const events: ArenaEvent[] = [];
   const moves: Record<Corner, string> = { agent_a: 'idle', agent_b: 'idle' };
   const noMove: Record<Corner, boolean> = { agent_a: false, agent_b: false };
+  const voided: Record<Corner, boolean> = { agent_a: false, agent_b: false };
   const corners: Corner[] = ['agent_a', 'agent_b'];
 
   for (const corner of corners) {
     const intent = intents[corner];
     if (intent === null) {
+      // A no-move breaks the streak: last_action -> null, repeat_streak -> 0 (4.6).
       noMove[corner] = true;
       moves[corner] = 'no_move';
       next[corner].penalties += 15;
+      next[corner].last_action = null;
+      next[corner].repeat_streak = 0;
       events.push({ type: 'no_move', who: corner, cause: 'timeout', penalty: 15 });
+      continue;
+    }
+
+    // The streak tracks the SUBMITTED action, and a void still increments it.
+    const streak = intent === (state[corner].last_action ?? null)
+      ? (state[corner].repeat_streak ?? 0) + 1
+      : 1;
+    next[corner].last_action = intent;
+    next[corner].repeat_streak = streak;
+    moves[corner] = intent;
+
+    if (streak > MAX_CONSECUTIVE_REPEATS) {
+      // Void is checked BEFORE affordability, so a void never also emits exhausted.
+      voided[corner] = true;
+      events.push({ type: 'void', who: corner, action: intent, streak });
       continue;
     }
     if (cost(intent) > state[corner].stamina) {
@@ -104,18 +124,25 @@ function resolveTick(
       moves[corner] = 'idle';
       continue;
     }
-    moves[corner] = intent;
   }
 
-  for (const corner of corners) next[corner].stamina -= cost(moves[corner]);
+  for (const corner of corners) {
+    // A voided move still pays, capped at what is left (4.6): spam costs stamina.
+    const spend = voided[corner]
+      ? Math.min(cost(moves[corner]), state[corner].stamina)
+      : cost(moves[corner]);
+    next[corner].stamina -= spend;
+  }
 
   for (const attacker of corners) {
     const defender: Corner = attacker === 'agent_a' ? 'agent_b' : 'agent_a';
     const action = moves[attacker];
     const attack = ATTACKS[action];
-    if (!attack || noMove[attacker]) continue;
+    if (!attack || noMove[attacker] || voided[attacker]) continue;
 
-    const defense = noMove[defender] ? null : DEFENSES[moves[defender]];
+    // A voided fighter is defenceless for the tick — its action negates nothing.
+    const defense =
+      noMove[defender] || voided[defender] ? null : DEFENSES[moves[defender]];
     if (defense && defense.counters.includes(action)) {
       if (defense.riposte > 0) {
         events.push({
@@ -145,7 +172,8 @@ function resolveTick(
   }
 
   for (const corner of corners) {
-    const regen = noMove[corner] ? 5 : moves[corner] === 'idle' ? 20 : 5;
+    // A voided idle gets no idle bonus — passive regen only (4.6).
+    const regen = noMove[corner] || voided[corner] ? 5 : moves[corner] === 'idle' ? 20 : 5;
     next[corner].stamina = Math.min(100, Math.max(0, next[corner].stamina + regen));
   }
 
@@ -237,18 +265,39 @@ export function startDemo(options: DemoOptions): DemoHandle {
   let tick = 0;
   let historyB: string[] = [];
 
-  /** agent_a: a competent mixer that finds the hook-into-jab trade (spec 11). */
-  function decideA(): string | null {
-    const recentJabs = historyB.slice(-4).filter((m) => m === 'jab').length;
-    if (state.agent_a.stamina < 20) return 'idle';
-    if (recentJabs >= 2 && tick % 4 === 0) return 'hook';
-    if (recentJabs >= 2) return 'block_high';
-    return ALL[Math.floor(random() * ALL.length)];
+  /** Would submitting `action` void for `corner` right now (spec 4.6)? */
+  function wouldVoid(corner: Corner, action: string): boolean {
+    return (
+      state[corner].last_action === action &&
+      (state[corner].repeat_streak ?? 0) >= MAX_CONSECUTIVE_REPEATS
+    );
   }
 
-  /** agent_b: Jab-bot, with one scripted timeout so the no-move path is exercised. */
+  /** agent_a: a competent mixer that finds the hook-into-jab trade (spec 11), and is
+   *  repeat-aware — it can read its own streak off the state and never wastes a tick. */
+  function decideA(): string | null {
+    const recentJabs = historyB.slice(-4).filter((m) => m === 'jab').length;
+    const pick =
+      state.agent_a.stamina < 20
+        ? 'idle'
+        : recentJabs >= 2 && tick % 4 === 0
+          ? 'hook'
+          : recentJabs >= 2
+            ? 'block_high'
+            : ALL[Math.floor(random() * ALL.length)];
+    if (!wouldVoid('agent_a', pick)) return pick;
+    return pick === 'block_high' ? 'block_low' : 'block_high';
+  }
+
+  /**
+   * agent_b: Jab-bot, with one scripted timeout so the no-move path is exercised.
+   * It spams into the cap twice first — that is what puts a `void` on screen — and
+   * from tick 10 becomes the repeat-aware `jab jab jab block_high` bot the server
+   * ships, which is still a fixed, exploitable pattern.
+   */
   function decideB(): string | null {
     if (tick === 5) return null;
+    if (tick > 9 && wouldVoid('agent_b', 'jab')) return 'block_high';
     return 'jab';
   }
 

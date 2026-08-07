@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from agents.common.decision import budget_seconds
+from agents.common.personas import PERSONA_KEYS, PERSONAS, prompt_version
+from agents.common.prompt import PROMPT_VERSION
 from agents.harness.model_client import HARNESS_VERSION, LiteLLMClient, ModelSpec, load_api_key
 
 
@@ -74,6 +76,37 @@ async def test_profile_records_the_resolved_model_not_just_the_alias():
     assert profile["temperature"] == 0.0
     assert profile["agent_version"] == HARNESS_VERSION
     assert profile["prompt_version"]
+
+
+def test_a_batch_defaults_to_the_neutral_prompt_so_a_model_comparison_is_clean():
+    """Varying persona and model at once is a confounded experiment, so a persona
+    is opt-in — but when it is set it must reach both the prompt and the log."""
+    client = LiteLLMClient(ModelSpec(model="m"), api_key="k", completion=fake_completion([]))
+    assert client.spec.persona is None
+    assert client.profile()["persona"] is None
+    assert client.profile()["prompt_version"] == PROMPT_VERSION
+    for persona in PERSONAS.values():
+        assert persona.guidance not in client.system_prompt
+
+
+@pytest.mark.parametrize("key", PERSONA_KEYS)
+def test_a_persona_reaches_the_batch_profile_and_the_batch_system_prompt(key):
+    client = LiteLLMClient(
+        ModelSpec(model="m", persona=key), api_key="k", completion=fake_completion([])
+    )
+    profile = client.profile()
+    assert profile["persona"] == key
+    assert profile["prompt_version"] == prompt_version(PERSONAS[key])
+    assert profile["prompt_version"] != PROMPT_VERSION
+    assert PERSONAS[key].guidance in client.system_prompt
+    assert "SINGLE JSON object" in client.system_prompt
+
+
+def test_an_unknown_persona_fails_before_a_batch_spends_anything():
+    client = LiteLLMClient(ModelSpec(model="m", persona="brawler"), api_key="k",
+                           completion=fake_completion([]))
+    with pytest.raises(ValueError, match="unknown persona"):
+        client.profile()
 
 
 def test_api_key_is_never_repr_ed():

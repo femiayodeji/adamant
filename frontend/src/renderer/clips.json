@@ -476,6 +476,47 @@
       ]
     },
 
+    "void": {
+      "_note": "Played INSTEAD OF the action's own clip when the tick carried a 'void' event for this fighter (arena_spec 4.6, the repeat cap). The punch never happened, so no strike clip may play: the lead hand loads, jams a third of the way out, stutters twice against the block and drops back to guard. Event-driven like 'exhausted', not a ninth action — clip name is still the action name everywhere else. See SPEC_NOTES.md #13.",
+      "frames": 16,
+      "keys": [
+        { "f": 0, "pose": {} },
+        {
+          "f": 4,
+          "pose": {
+            "Hips": { "x": 5, "y": -31 },
+            "LeftArm": { "x": -20, "y": -24, "z": -60 },
+            "LeftForeArm": { "y": -118 },
+            "_root": { "z": -3 }
+          }
+        },
+        {
+          "f": 7,
+          "pose": {
+            "Hips": { "x": 5, "y": -27 },
+            "Spine": { "x": 8, "y": -8 },
+            "LeftShoulder": { "z": 14 },
+            "LeftArm": { "x": -16, "y": -44, "z": -44 },
+            "LeftForeArm": { "y": -84 },
+            "_root": { "z": -1 }
+          }
+        },
+        {
+          "f": 11,
+          "pose": {
+            "Hips": { "x": 6, "y": -33 },
+            "Neck": { "x": 9, "y": 16 },
+            "Head": { "x": 8, "y": 16 },
+            "LeftShoulder": { "z": 4 },
+            "LeftArm": { "x": -20, "y": -20, "z": -64 },
+            "LeftForeArm": { "y": -124 },
+            "_root": { "z": -5 }
+          }
+        },
+        { "f": 16, "pose": {} }
+      ]
+    },
+
     "exhausted": {
       "_note": "Played instead of idle when the tick carried an 'exhausted' event (arena_spec 3): the action was unaffordable and got converted. Hands drop, heavy breathing — the stamina economy made legible. See SPEC_NOTES.md #4.",
       "frames": 45,

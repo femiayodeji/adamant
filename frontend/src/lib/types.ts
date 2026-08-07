@@ -25,7 +25,19 @@ export interface FighterState {
   stamina: number;
   points: number;
   penalties: number;
+  /** Last SUBMITTED action, or null at match start and after a no_move (spec 4.6).
+   *  Optional here only because logs written before the repeat cap landed lack it —
+   *  the live wire always carries it. Read it as `?? null`. */
+  last_action?: string | null;
+  /** How many times in a row `last_action` has been submitted. 0 with no last action.
+   *  A submission at `MAX_CONSECUTIVE_REPEATS + 1` or beyond is void. */
+  repeat_streak?: number;
 }
+
+/** Repeats allowed before a move voids (spec 4.6, `MAX_CONSECUTIVE_REPEATS`).
+ *  Mirrors the server constant so the HUD can draw the cap; the server is the
+ *  authority, and the pip row degrades gracefully if it ever moves. */
+export const MAX_CONSECUTIVE_REPEATS = 3;
 
 export interface AgentProfile {
   model?: string;
@@ -83,6 +95,16 @@ export interface NoMoveEvent {
   cause: 'timeout' | 'malformed' | 'invalid_action' | 'wrong_tick' | 'duplicate' | string;
   penalty: number;
 }
+/** The repeat cap fired (spec 4.6): the action was submitted legally and on time but
+ *  is stripped to nothing — no damage, no defense, no riposte, no penalty. Stamina is
+ *  still paid. `tick_result.moves` still reports the submitted action, so the renderer
+ *  must key off this event, not off `moves`. */
+export interface VoidEvent {
+  type: 'void';
+  who: Corner;
+  action: string;
+  streak: number;
+}
 export interface KoEvent {
   type: 'ko';
   who: Corner;
@@ -94,6 +116,7 @@ export type ArenaEvent =
   | DodgedEvent
   | ExhaustedEvent
   | NoMoveEvent
+  | VoidEvent
   | KoEvent;
 
 /* ------------------------------------------------- spectator messages (7) */

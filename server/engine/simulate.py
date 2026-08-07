@@ -28,6 +28,7 @@ from .resolver import (
     to_egocentric,
 )
 from .strategies import (
+    CappedConstantBot,
     ConstantBot,
     CycleBot,
     FrequencyBot,
@@ -153,6 +154,10 @@ def run_match(
 
 
 def _entrants(seed: int = 0) -> list[Strategy]:
+    # Both the pure one-action strategies and their cap-respecting successors. The
+    # pure ones are kept deliberately: under spec §4.6 they void out after three
+    # ticks, and the round-robin should say so out loud rather than quietly drop
+    # them. The `mostly-` variants are what a one-action strategy is now worth.
     return [
         ConstantBot("jab"),
         ConstantBot("cross"),
@@ -162,6 +167,13 @@ def _entrants(seed: int = 0) -> list[Strategy]:
         ConstantBot("dodge_left"),
         ConstantBot("dodge_right"),
         ConstantBot("idle"),
+        CappedConstantBot("jab"),
+        CappedConstantBot("cross"),
+        CappedConstantBot("hook"),
+        CappedConstantBot("block_high"),
+        CappedConstantBot("block_low"),
+        CappedConstantBot("dodge_left"),
+        CappedConstantBot("dodge_right"),
         RandomBot(seed=seed),
         JabBot(),
         CycleBot(period=3),
@@ -201,12 +213,27 @@ def round_robin(seed: int = 0, max_ticks: int = rules.DEFAULT_MAX_TICKS) -> dict
 
 
 def published_figures(max_ticks: int = rules.DEFAULT_MAX_TICKS) -> dict[str, SimResult]:
-    """The three figures the Phase 1 gate names explicitly."""
+    """The figures the Phase 1 gate names explicitly.
+
+    Note which bot each uses. `block_high_vs_jab` is deliberately the *pure*
+    ConstantBot — it is the naive answer to the Jab-bot trap, and the point of the
+    figure is what the repetition cap now does to it. The dodge figures use
+    `CappedConstantBot`, because a pure dodge bot voids out and would report the
+    cap's effect where the figure is meant to report the riposte's.
+    """
     return {
         "block_high_vs_jab": run_match(ConstantBot("block_high"), JabBot(), max_ticks=max_ticks),
+        "mostly_block_high_vs_jab": run_match(
+            CappedConstantBot("block_high"), JabBot(), max_ticks=max_ticks
+        ),
         "hook_every_4th_vs_jab": run_match(HookEveryNthBot(4), JabBot(), max_ticks=max_ticks),
-        "dodge_right_vs_jab": run_match(ConstantBot("dodge_right"), JabBot(), max_ticks=max_ticks),
-        "dodge_left_vs_hook": run_match(ConstantBot("dodge_left"), ConstantBot("hook"), max_ticks=max_ticks),
+        "dodge_right_vs_jab": run_match(
+            CappedConstantBot("dodge_right"), JabBot(), max_ticks=max_ticks
+        ),
+        "dodge_left_vs_hook": run_match(
+            CappedConstantBot("dodge_left"), CappedConstantBot("hook"), max_ticks=max_ticks
+        ),
+        "pure_jab_voids_out": run_match(ConstantBot("jab"), ConstantBot("idle"), max_ticks=max_ticks),
     }
 
 

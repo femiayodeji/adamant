@@ -47,6 +47,14 @@ STAMINA_CAP = 100
 PASSIVE_REGEN = 5  # every tick, unconditionally — including on a no-move
 IDLE_REGEN_BONUS = 15  # on top of PASSIVE_REGEN, so idle is +20 total
 
+# ─── Repetition cap (spec §4.6) ───
+
+# A fighter may throw the same action at most this many times in a row; the next
+# consecutive repeat is stripped to nothing. The cap is what stops a single action
+# from being a whole strategy, so that reading the opponent — the skill this
+# platform measures — cannot be sidestepped by picking one move and holding it.
+MAX_CONSECUTIVE_REPEATS = 3
+
 # ─── No-move (spec §4.4) ───
 
 # Equal to `hook` damage, the largest single hit in the game, so that a no-move is
@@ -82,6 +90,7 @@ BOXING: dict[str, Any] = {
     "passive_regen": PASSIVE_REGEN,
     "idle_regen_bonus": IDLE_REGEN_BONUS,
     "no_move_penalty": NO_MOVE_PENALTY,
+    "max_consecutive_repeats": MAX_CONSECUTIVE_REPEATS,
 }
 
 

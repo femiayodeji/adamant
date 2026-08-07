@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..common.decision import budget_seconds
-from ..common.prompt import PROMPT_VERSION
+from ..common.personas import get_persona, prompt_version
+from ..common.prompt import build_system_prompt
 
 HARNESS_VERSION = "harness@1.0.0"
 OPENROUTER_PREFIX = "openrouter/"
@@ -49,6 +50,10 @@ class ModelSpec:
     temperature: float | None = 0.0
     max_tokens: int = 512
     label: str | None = None
+    #: Persona key, or None for the neutral prompt -- which is the default,
+    #: because a model comparison that varies the strategy prompt at the same
+    #: time is confounded. Set it deliberately, and it travels into the profile.
+    persona: str | None = None
 
     @property
     def name(self) -> str:
@@ -73,6 +78,11 @@ class LiteLLMClient:
 
             self.completion = acompletion
 
+    @property
+    def system_prompt(self) -> str:
+        """The system prompt for this entrant. ``ArenaRunner`` pins it per match."""
+        return build_system_prompt(get_persona(self.spec.persona))
+
     def profile(self) -> dict:
         """Agent profile sent at join and stored verbatim in the match log."""
         return {
@@ -81,7 +91,8 @@ class LiteLLMClient:
             # Filled in after the first call; both are recorded.
             "resolved_model": self.resolved_model,
             "provider": "openrouter",
-            "prompt_version": PROMPT_VERSION,
+            "persona": self.spec.persona,
+            "prompt_version": prompt_version(get_persona(self.spec.persona)),
             "temperature": self.spec.temperature,
             "agent_version": HARNESS_VERSION,
         }

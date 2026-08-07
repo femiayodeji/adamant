@@ -13,15 +13,26 @@ from contextlib import asynccontextmanager
 
 from websockets.asyncio.server import serve
 
-FIGHTER = {"hp": 100, "stamina": 100, "points": 0, "penalties": 0}
+#: A fighter state block as the platform sends it (spec 4.6 added the last two
+#: fields, which are what let an agent see the repetition cap coming without
+#: keeping any state of its own).
+FIGHTER = {
+    "hp": 100,
+    "stamina": 100,
+    "points": 0,
+    "penalties": 0,
+    "last_action": None,
+    "repeat_streak": 0,
+}
 
 
-def state_update(tick: int, deadline_ms: int = 200, history=None) -> dict:
+def state_update(tick: int, deadline_ms: int = 200, history=None, me=None) -> dict:
+    """``me`` overrides fields of our own fighter block, e.g. a repeat streak."""
     return {
         "type": "state_update",
         "tick": tick,
         "deadline_ms": deadline_ms,
-        "self": dict(FIGHTER),
+        "self": {**FIGHTER, **(me or {})},
         "opponent": dict(FIGHTER),
         "history": history or [],
     }
@@ -33,8 +44,10 @@ MATCH_END = {
     "reason": "ko",
     "final_tick": 3,
     "final_state": {
-        "agent_a": {"hp": 65, "stamina": 66, "points": 105, "penalties": 0},
-        "agent_b": {"hp": 0, "stamina": 40, "points": 35, "penalties": 15},
+        "agent_a": {"hp": 65, "stamina": 66, "points": 105, "penalties": 0,
+                    "last_action": "hook", "repeat_streak": 1},
+        "agent_b": {"hp": 0, "stamina": 40, "points": 35, "penalties": 15,
+                    "last_action": "jab", "repeat_streak": 3},
     },
 }
 

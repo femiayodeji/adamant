@@ -27,6 +27,7 @@ DEFAULT_GROUP_FIELDS = (
     "max_ticks",
     "entrant",
     "opponent",
+    "persona",
     "prompt_version",
     "agent_version",
     "resolved_model",
@@ -111,6 +112,7 @@ def aggregate(
                     r.get("instruction_following_rate") for r in group
                 ),
                 "mean_no_move_rate": _mean(r.get("no_move_rate") for r in group),
+                "mean_void_rate": _mean(r.get("void_rate") for r in group),
                 "mean_fallback_rate": _mean(r.get("fallback_rate") for r in group),
                 # Corner balance: paired matches should be 50/50.
                 "matches_agent_a": corners.get("agent_a", 0),

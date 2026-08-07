@@ -1,15 +1,36 @@
+/*
+ * ADAM Arena — one machine, three views.
+ *
+ * The look is industrial: near-black steel, hairline rules, square corners, hot
+ * accents used sparingly, and every number set in a tabular mono so the HUD reads
+ * as instrumentation rather than as a web page. Corner A is cyan diagnostic, corner
+ * B is hazard red, and amber is reserved for warnings (the repeat cap, the resume
+ * countdown, an empty stamina bar).
+ *
+ * Colour is never the only signal: every corner is labelled A/B, every gauge prints
+ * its number, and the repeat pips print `n/3` beside them.
+ */
+
 :root {
-  --bg: #070a0f;
-  --panel: #0f1621;
-  --panel-2: #141d2b;
-  --line: #1f2b3c;
-  --text: #e7eef7;
-  --muted: #8ea0b8;
-  --a: #4da3ff;
-  --b: #ff6161;
-  --ok: #55d6a0;
-  --warn: #ffc25e;
-  --radius: 14px;
+  --bg: #05070a;
+  --bg-2: #080b10;
+  --panel: #0c1015;
+  --panel-2: #11161d;
+  --line: #1d252f;
+  --line-hot: #2b3746;
+  --text: #e8eef5;
+  --muted: #8496a8;
+  --dim: #5d6c7d;
+
+  --a: #29e0ff;
+  --b: #ff5a3c;
+  --ok: #35e08a;
+  --warn: #ffb020;
+  --void: #ffb020;
+
+  --radius: 4px;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
   color-scheme: dark;
 }
 
@@ -31,70 +52,109 @@ body {
 
 body {
   min-height: 100dvh;
+  /* Deck plate: a faint machined grid, one cold pool of light at the top. */
   background:
-    radial-gradient(1200px 700px at 50% -10%, #16223a 0%, transparent 60%),
+    radial-gradient(900px 460px at 50% -8%, rgba(41, 224, 255, 0.11) 0%, transparent 70%),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 39px,
+      rgba(133, 160, 184, 0.045) 39px 40px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 39px,
+      rgba(133, 160, 184, 0.045) 39px 40px
+    ),
     var(--bg);
 }
 
 code,
 pre,
 .mono {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- controls */
 
 button {
   font: inherit;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
   cursor: pointer;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
+  border-radius: var(--radius);
+  border: 1px solid var(--line-hot);
+  background: linear-gradient(180deg, var(--panel-2), #0a0e13);
   color: var(--text);
   padding: 0.6rem 1rem;
-  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
 }
 
 button:hover:not(:disabled) {
-  background: #1b2739;
-  border-color: #2c3c53;
+  border-color: var(--a);
+  color: #fff;
+  background: linear-gradient(180deg, #16202a, #0c1219);
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.38;
   cursor: not-allowed;
 }
 
 button.primary {
-  background: linear-gradient(180deg, #3d8ee6, #2f6fbd);
-  border-color: #5aa4f0;
-  font-weight: 620;
+  background: linear-gradient(180deg, #3ff0ff, #10b6d8);
+  border-color: #8ff6ff;
+  color: #02171d;
+  font-weight: 700;
 }
 
 button.primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #4c9bf0, #3a7dcb);
+  background: linear-gradient(180deg, #6df6ff, #21c7e8);
+  color: #02171d;
 }
 
 button.big {
-  padding: 0.9rem 1.5rem;
-  font-size: 1.05rem;
+  padding: 0.85rem 1.6rem;
+  font-size: 0.95rem;
 }
 
 input,
 select {
   font: inherit;
   color: var(--text);
-  background: #0b111a;
+  background: #06090d;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 0.6rem 0.75rem;
   min-width: 0;
 }
 
 input:focus,
 select:focus,
-button:focus-visible {
+button:focus-visible,
+a:focus-visible {
   outline: 2px solid var(--a);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
+
+/* ------------------------------------------------------------------ shell */
 
 .app {
   max-width: 1080px;
@@ -108,21 +168,37 @@ button:focus-visible {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.4rem 0.2rem;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
   flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(41, 224, 255, 0.05), transparent 60%), var(--panel);
 }
 
 .brand {
+  font-family: var(--mono);
   font-weight: 700;
-  letter-spacing: 0.16em;
-  font-size: 0.85rem;
+  letter-spacing: 0.28em;
+  font-size: 0.8rem;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--dim);
 }
 
 .brand b {
   color: var(--text);
+}
+
+.brand::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 0.6rem;
+  background: var(--a);
+  box-shadow: 0 0 10px var(--a);
+  vertical-align: baseline;
 }
 
 .spacer {
@@ -133,11 +209,13 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.76rem;
-  padding: 0.22rem 0.6rem;
-  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  padding: 0.24rem 0.55rem;
+  border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: var(--panel);
+  background: var(--bg-2);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -146,11 +224,12 @@ button:focus-visible {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--dim);
 }
 
 .dot.open {
   background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
 }
 .dot.closed {
   background: var(--b);
@@ -162,15 +241,31 @@ button:focus-visible {
 
 @keyframes pulse {
   50% {
-    opacity: 0.3;
+    opacity: 0.25;
   }
 }
 
 .card {
-  background: linear-gradient(180deg, var(--panel), #0c131d);
+  background: linear-gradient(180deg, var(--panel), #080b10);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 1.1rem;
+  position: relative;
+}
+
+/* Hairline highlight along the top edge — the one thing that makes a flat panel
+   read as a milled plate rather than as a div. */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(160, 200, 230, 0.22),
+    transparent
+  );
 }
 
 .stack {
@@ -189,18 +284,23 @@ button:focus-visible {
 h1 {
   font-size: 1.6rem;
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+  font-stretch: condensed;
 }
 
 h2 {
-  font-size: 1.05rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
   margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
 }
 
 p.lede {
   margin: 0;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .muted {
@@ -208,18 +308,19 @@ p.lede {
 }
 
 small.hint {
-  color: var(--muted);
+  color: var(--dim);
   font-size: 0.78rem;
   line-height: 1.45;
 }
 
 .error {
-  border: 1px solid #5a2230;
-  background: #23111a;
-  color: #ffb4b4;
-  border-radius: 10px;
+  border: 1px solid #5c2418;
+  border-left: 3px solid var(--b);
+  background: #190c09;
+  color: #ffbcae;
+  border-radius: var(--radius);
   padding: 0.6rem 0.8rem;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
 }
 
 /* ---------------------------------------------------------------- home */
@@ -227,29 +328,52 @@ small.hint {
 .home {
   display: grid;
   gap: 1rem;
-  margin-top: 8vh;
+  margin-top: 6vh;
 }
 
 .home .hero {
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.8rem;
   align-items: center;
 }
 
 .home .hero h1 {
-  font-size: clamp(1.8rem, 6vw, 2.6rem);
+  font-size: clamp(1.9rem, 6.5vw, 2.9rem);
+  line-height: 1.05;
+  text-transform: uppercase;
+  letter-spacing: 0.005em;
+}
+
+.home .hero h1 b {
+  color: var(--a);
+  font-weight: 800;
+}
+
+/* Hazard band: the strongest single "this is machinery" signal on the page. */
+.hazard {
+  height: 8px;
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--line);
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--warn) 0 10px,
+    #0b0e13 10px 20px
+  );
+  opacity: 0.75;
 }
 
 .divider {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  color: var(--muted);
-  font-size: 0.78rem;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.24em;
 }
 
 .divider::before,
@@ -268,12 +392,30 @@ small.hint {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 3px,
+      rgba(41, 224, 255, 0.035) 3px 4px
+    ),
+    linear-gradient(180deg, var(--panel), #080b10);
 }
 
 .code-plate .code {
-  font-size: clamp(1.8rem, 8vw, 3rem);
+  font-size: clamp(1.9rem, 8vw, 3.1rem);
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
+  color: var(--a);
+  text-shadow: 0 0 26px rgba(41, 224, 255, 0.3);
+  line-height: 1.1;
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--dim);
 }
 
 .corners {
@@ -285,35 +427,40 @@ small.hint {
 .corner {
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--panel), #080b10);
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
   min-height: 190px;
+  position: relative;
+  overflow: hidden;
 }
 
-.corner.a {
-  border-top: 3px solid var(--a);
-}
-.corner.b {
-  border-top: 3px solid var(--b);
+.corner::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
 }
 
-.corner .label {
-  font-size: 0.72rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
+.corner.a::after {
+  background: linear-gradient(90deg, var(--a), transparent);
+}
+.corner.b::after {
+  background: linear-gradient(90deg, var(--b), transparent);
 }
 
 .corner .name {
-  font-size: 1.2rem;
-  font-weight: 640;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -0.005em;
 }
 
 .corner .waiting {
   color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.82rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -335,12 +482,13 @@ small.hint {
   margin: 0;
   flex: 1;
   overflow-x: auto;
-  background: #0a1017;
+  background: #05080c;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-left: 3px solid var(--line-hot);
+  border-radius: var(--radius);
   padding: 0.6rem 0.7rem;
-  font-size: 0.82rem;
-  color: #cfe0f2;
+  font-size: 0.8rem;
+  color: #b7d7e6;
 }
 
 /* --------------------------------------------------------------- arena */
@@ -352,8 +500,8 @@ small.hint {
   min-height: 320px;
   border-radius: var(--radius);
   overflow: hidden;
-  border: 1px solid var(--line);
-  background: #05080d;
+  border: 1px solid var(--line-hot);
+  background: #03050a;
 }
 
 .stage canvas {
@@ -381,87 +529,247 @@ small.hint {
 }
 
 .hud-panel {
-  background: rgba(8, 13, 20, 0.72);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.55rem 0.65rem;
+  background: rgba(5, 8, 12, 0.82);
+  border: 1px solid var(--line-hot);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.6rem;
   backdrop-filter: blur(6px);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.34rem;
   min-width: 0;
 }
 
-.hud-panel.b {
-  text-align: right;
+.hud-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.hud-panel.b .hud-head {
+  flex-direction: row-reverse;
+}
+
+.badge {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 0.24rem 0.34rem;
+  border-radius: 2px;
+  color: #04090d;
+  flex: none;
+}
+
+.badge.a {
+  background: var(--a);
+}
+.badge.b {
+  background: var(--b);
+  color: #1a0603;
 }
 
 .hud-name {
   font-weight: 620;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bar {
-  height: 9px;
-  border-radius: 999px;
-  background: #16202e;
-  overflow: hidden;
-  border: 1px solid #223043;
+/* Gauges: label, notched bar, number. The number never wraps or truncates. */
+.gauge {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr 2.1rem;
+  align-items: center;
+  gap: 0.4rem;
 }
 
-.bar > span {
+.hud-panel.b .gauge {
+  grid-template-columns: 2.1rem 1fr 1.6rem;
+}
+
+.hud-panel.b .g-label {
+  order: 3;
+  text-align: right;
+}
+.hud-panel.b .g-num {
+  order: 1;
+  text-align: left;
+}
+.hud-panel.b .bar {
+  order: 2;
+}
+
+.g-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+}
+
+.g-num {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.bar {
+  position: relative;
+  height: 10px;
+  border-radius: 1px;
+  background: #0a0f16;
+  overflow: hidden;
+  border: 1px solid #202a36;
+}
+
+.bar .fill {
   display: block;
   height: 100%;
-  transition: width 220ms ease;
+  transition: width 200ms ease;
 }
 
-.bar.hp > span {
-  background: linear-gradient(90deg, #ff7a7a, #ffd166);
+.bar.hp .fill {
+  background: linear-gradient(90deg, #ff6a4a, #ff9d6a);
+}
+.bar.hp.a .fill {
+  background: linear-gradient(90deg, #1fd0f5, #7ef0ff);
+}
+.bar.st .fill {
+  background: linear-gradient(90deg, #1f9f77, #35e08a);
+  opacity: 0.9;
 }
 
-.bar.hp.a > span {
-  background: linear-gradient(90deg, #4da3ff, #7ee0ff);
+.bar.low .fill {
+  background: linear-gradient(90deg, #ff7a1f, var(--warn));
 }
 
-.bar.stam > span {
-  background: linear-gradient(90deg, #3fae86, #7be3bd);
-  opacity: 0.85;
+/* Twenty notches = five points each, so damage can be counted off the bar. */
+.bar .notches {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0 calc(5% - 2px),
+    rgba(3, 5, 9, 0.9) calc(5% - 2px) 5%
+  );
+}
+
+.hud-panel.b .bar .fill {
+  margin-left: auto;
 }
 
 .hud-stats {
   display: flex;
-  gap: 0.4rem;
-  font-size: 0.72rem;
-  color: var(--muted);
+  gap: 0.5rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  color: var(--dim);
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.hud-stats b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.hud-stats .pen b {
+  color: var(--b);
 }
 
 .hud-panel.b .hud-stats {
   justify-content: flex-end;
 }
 
+/* Repeat-cap pips (spec 4.6). */
+.pips {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-family: var(--mono);
+}
+
+.pip-label {
+  color: var(--dim);
+}
+
+.pip-row {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pip {
+  width: 7px;
+  height: 9px;
+  border: 1px solid #2b3746;
+  background: #0a0f16;
+  display: inline-block;
+}
+
+.pip.on {
+  background: var(--muted);
+  border-color: var(--muted);
+}
+
+.pips.hot .pip.on,
+.pips.voided .pip.on {
+  background: var(--void);
+  border-color: var(--void);
+  box-shadow: 0 0 7px rgba(255, 176, 32, 0.7);
+}
+
+.pip-n {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.pips.hot .pip-n {
+  color: var(--void);
+}
+
+.pips.voided .pip-n {
+  color: #06090d;
+  background: var(--void);
+  padding: 0 0.28rem;
+  border-radius: 2px;
+  animation: blink 0.55s steps(1) 3;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .tickbox {
-  background: rgba(8, 13, 20, 0.72);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.4rem 0.7rem;
+  background: rgba(5, 8, 12, 0.82);
+  border: 1px solid var(--line-hot);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.6rem;
   text-align: center;
   backdrop-filter: blur(6px);
 }
 
 .tickbox .n {
-  font-size: 1.05rem;
+  font-size: 1.15rem;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--a);
+}
+
+.tickbox .n .of {
+  font-size: 0.68rem;
+  color: var(--dim);
+  letter-spacing: 0;
 }
 
 .tickbox .l {
-  font-size: 0.62rem;
-  letter-spacing: 0.14em;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--dim);
 }
 
 .moves {
@@ -472,18 +780,130 @@ small.hint {
 }
 
 .move {
-  font-size: 0.78rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: rgba(8, 13, 20, 0.75);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-hot);
+  background: rgba(5, 8, 12, 0.86);
 }
 
 .move.a {
-  border-color: rgba(77, 163, 255, 0.55);
+  border-color: rgba(41, 224, 255, 0.6);
+  color: #b6f2ff;
 }
 .move.b {
-  border-color: rgba(255, 97, 97, 0.55);
+  border-color: rgba(255, 90, 60, 0.6);
+  color: #ffc3b5;
+}
+
+.move.voided {
+  border-color: var(--void);
+  color: var(--void);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+}
+
+.move.voided em {
+  font-style: normal;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+/* Per-tick callouts over the canvas. */
+.callouts {
+  position: absolute;
+  inset: 34% 0 auto 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 1.2rem;
+  pointer-events: none;
+}
+
+.call-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+  width: 42%;
+}
+
+.call-col.b {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.call {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  animation: callout 1.15s ease-out forwards;
+}
+
+.call b {
+  font-size: clamp(1.1rem, 3.4vw, 1.9rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  font-family: var(--mono);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85);
+}
+
+.call i {
+  font-style: normal;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.call.hit b {
+  color: #fff1d6;
+}
+.call.ko b {
+  color: var(--b);
+}
+.call.blocked b {
+  color: #a9e6ff;
+}
+.call.dodged b {
+  color: #8affd0;
+}
+.call.exhausted b,
+.call.no_move b {
+  color: var(--warn);
+}
+
+.call.void b {
+  color: #120b00;
+  background: var(--void);
+  padding: 0.1rem 0.45rem;
+  box-shadow: 0 0 24px rgba(255, 176, 32, 0.5);
+}
+
+.call.void i {
+  color: var(--void);
+}
+
+@keyframes callout {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(1.04);
+  }
+  22% {
+    transform: translateY(0) scale(1);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
 }
 
 .overlay {
@@ -492,7 +912,7 @@ small.hint {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(4, 7, 11, 0.78);
+  background: rgba(3, 5, 9, 0.84);
   backdrop-filter: blur(3px);
   text-align: center;
   padding: 1rem;
@@ -501,34 +921,39 @@ small.hint {
 .overlay .box {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.7rem;
   align-items: center;
   pointer-events: auto;
 }
 
 .overlay .title {
-  font-size: clamp(1.3rem, 5vw, 2rem);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: clamp(1.3rem, 5vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .countdown {
-  font-size: 2rem;
+  font-size: 2.2rem;
   font-weight: 700;
   color: var(--warn);
+  letter-spacing: 0.08em;
 }
 
 .ticker {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.8rem;
+  font-family: var(--mono);
+  font-size: 0.76rem;
   max-height: 8.5rem;
   overflow: hidden;
 }
 
 .ticker .line {
   color: var(--muted);
+  border-left: 2px solid var(--line);
+  padding-left: 0.5rem;
 }
 
 .ticker .line b {
@@ -537,13 +962,13 @@ small.hint {
 }
 
 .ev-hit {
-  color: #ffb4b4;
+  color: #ffc9a8;
 }
 .ev-blocked {
-  color: #9fd0ff;
+  color: #a9e6ff;
 }
 .ev-dodged {
-  color: #8ee6bd;
+  color: #8affd0;
 }
 .ev-exhausted {
   color: var(--warn);
@@ -551,9 +976,24 @@ small.hint {
 .ev-no_move {
   color: #ff9a6c;
 }
+.ev-void {
+  color: var(--void);
+  font-weight: 600;
+}
 .ev-ko {
-  color: #ff7676;
+  color: var(--b);
   font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call,
+  .pips.voided .pip-n,
+  .dot.connecting {
+    animation: none;
+  }
+  .bar .fill {
+    transition: none;
+  }
 }
 
 @media (max-width: 720px) {
@@ -562,7 +1002,7 @@ small.hint {
   }
   .topbar button {
     padding: 0.45rem 0.7rem;
-    font-size: 0.85rem;
+    font-size: 0.72rem;
   }
   .corners {
     grid-template-columns: 1fr;
@@ -570,11 +1010,44 @@ small.hint {
   .stage {
     aspect-ratio: 4 / 3;
   }
+  .hud {
+    padding: 0.45rem;
+  }
   .hud-top {
-    grid-template-columns: 1fr auto 1fr;
-    font-size: 0.9rem;
+    gap: 0.35rem;
+  }
+  .hud-panel {
+    padding: 0.4rem 0.45rem;
+  }
+  .hud-name {
+    font-size: 0.76rem;
+  }
+  /* On a phone the HP/ST label is dropped and the number stays: the bar keeps its
+     width, and the digits — which are the unambiguous part — never go. The meter
+     keeps its aria-label, so nothing is lost to a screen reader. */
+  .gauge {
+    grid-template-columns: 1fr 2rem;
+    gap: 0.3rem;
+  }
+  .hud-panel.b .gauge {
+    grid-template-columns: 2rem 1fr;
+  }
+  .g-label {
+    display: none;
+  }
+  .g-num {
+    font-size: 0.72rem;
   }
   .hud-stats {
-    font-size: 0.66rem;
+    font-size: 0.6rem;
+    gap: 0.35rem;
+  }
+  /* Clear of the HUD panels, which are proportionally much taller on a phone. */
+  .callouts {
+    inset: 46% 0 auto 0;
+    padding: 0 0.6rem;
+  }
+  .call-col {
+    width: 46%;
   }
 }

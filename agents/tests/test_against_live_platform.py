@@ -90,25 +90,35 @@ async def test_the_published_agent_loop_kos_jab_bot_on_the_real_platform(arena):
 
 
 async def test_a_slow_model_hedges_in_time_instead_of_no_moving(arena):
-    """The point of the time-box. Under v0.4 rules a hedge is strictly better than
+    """The point of the time-box. Under v0.6 rules a hedge is strictly better than
     silence — a no-move is defenceless and costs 15 — so the agent must always get
-    *something* on the wire before the deadline."""
+    *something* on the wire before the deadline.
+
+    And the hedge must survive the repetition cap. Five ticks of hedging is one
+    tick past the cap: a fallback pinned to `block_high` would be voided on the
+    fourth and stand the agent up defenceless, which is the opposite of hedging.
+    So the hedge steps sideways on the fourth and the streak resets."""
 
     async def never_answers(system, user, deadline_ms):
         await asyncio.sleep(30)
         raise AssertionError("unreachable")
 
     end, log = await _versus_jab_bot(
-        arena, make_decider(never_answers), deadline_ms=500, max_ticks=4
+        arena, make_decider(never_answers), deadline_ms=500, max_ticks=5
     )
 
-    assert end is not None and end["final_tick"] == 4
+    assert end is not None and end["final_tick"] == 5
+    played = [record["moves"]["agent_a"] for record in log["ticks"]]
+    assert played == ["block_high", "block_high", "block_high", "block_low", "block_high"]
+
     for record in log["ticks"]:
-        assert record["moves"]["agent_a"] == "block_high", "the documented hedge"
         assert record["telemetry"]["agent_a"]["fallback"] is True
         assert not [e for e in record["events"] if e["type"] == "no_move"], (
             "a hedge that arrives late is worse than useless — it becomes a penalty"
         )
+        assert not [
+            e for e in record["events"] if e["type"] == "void" and e["who"] == "agent_a"
+        ], "a hedge that voids itself is not a hedge"
     assert log["match_end"]["final_state"]["agent_a"]["penalties"] == 0
 
 
