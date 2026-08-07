@@ -70,6 +70,10 @@ export class ArenaRenderer {
   private lastFrameMs = 0;
   private paused = false;
   private disposed = false;
+  /** Replay transport speed. Multiplies the backlog catch-up scale, so `0.25` is a
+   *  quarter-speed review and `4` a fast skim; live play never touches it. */
+  private speed = 1;
+  private frameHook: (() => void) | null = null;
 
   private constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -160,12 +164,54 @@ export class ArenaRenderer {
     this.paused = paused;
   }
 
+  /** Replay transport speed (1 = as fought). Clamped to a range that still animates. */
+  setSpeed(speed: number): void {
+    this.speed = Math.min(Math.max(speed, 0.1), 8);
+  }
+
+  /**
+   * Run `hook` immediately after every `render()`, while the drawing buffer is
+   * still valid.
+   *
+   * This is the only safe moment to `drawImage` the WebGL canvas into a 2D one:
+   * outside the frame that drew it the buffer is already cleared, which is why the
+   * video recorder composites from here rather than from its own rAF loop.
+   */
+  setFrameHook(hook: (() => void) | null): void {
+    this.frameHook = hook;
+  }
+
   /** Back to two fighters standing in their corners — used before a replay. */
   reset(): void {
     this.queue = [];
     this.currentTick = null;
     this.tickElapsed = 0;
     for (const corner of CORNERS) this.fighters[corner].reset();
+  }
+
+  /**
+   * Put the scene where it would be at `tick` without playing anything in between —
+   * the slider drag. `state` on a tick_result is absolute (spec §7), so one tick is
+   * the whole picture and there is nothing to accumulate; the only thing a jump has
+   * to reconstruct is whether a fighter is already on the floor.
+   */
+  scrubTo(tick: TickResult, knockedOut: readonly Corner[]): void {
+    this.queue = [];
+    this.currentTick = null;
+    this.tickElapsed = 0;
+    for (const corner of CORNERS) {
+      this.fighters[corner].reset();
+      if (knockedOut.includes(corner)) this.fighters[corner].snapToKo();
+    }
+    this.sparks.clear();
+    this.onHud?.({
+      tick: tick.tick,
+      state: tick.state,
+      moves: tick.moves ?? {},
+      events: tick.events ?? [],
+      telemetry: tick.telemetry,
+      backlog: 0,
+    });
   }
 
   dispose(): void {
@@ -198,12 +244,13 @@ export class ArenaRenderer {
       this.step(dt);
     }
     this.renderer.render(this.scene, this.camera);
+    this.frameHook?.();
   };
 
   private step(dt: number): void {
     // Catch-up: ticks can resolve much faster than a 0.5 s clip plays
     // (arena_spec.md 13). Speed the queue up rather than dropping frames.
-    const scale = Math.min(1 + 0.3 * this.queue.length, MAX_TIME_SCALE);
+    const scale = Math.min(1 + 0.3 * this.queue.length, MAX_TIME_SCALE) * this.speed;
     for (const corner of CORNERS) this.fighters[corner].setTimeScale(scale);
 
     if (this.currentTick) {

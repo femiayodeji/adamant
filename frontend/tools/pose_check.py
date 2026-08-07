@@ -14,8 +14,27 @@ What it checks
   5. Loop clips are seamless (first key == last key).
   6. FK sanity per keyframe: feet on the floor after grounding, hips at a plausible
      height, no fist below the hips in a guard pose, punches actually reach forward.
+  7. THE FLOOR, on the skinned mesh, on every interpolated frame — see below.
+
+Why check 7 is not check 6 again
+  Checks 1-6 look at JOINT positions at KEYFRAMES, and that misses the floor twice
+  over. Joints sit inside the body, so an ankle can be comfortably above the deck
+  while the foot around it is buried; and three.js plays the frames *between* the
+  keyframes, where a slerped rotation paired with a linear hips path can dive far
+  below anything the keyframes reveal. The `ko` fall did both at once: every
+  keyframe passed, and the right foot still ploughed 14 cm under the deck for most
+  of a second.
+
+  So check 7 skins the actual mesh — glTF vertex weights, joint matrices, inverse
+  bind matrices — and evaluates the real lowest vertex at every other frame of
+  every clip, after applying the same grounding solve clipFactory.ts applies. To
+  keep that affordable in pure Python it runs against a precomputed probe set
+  (per bone, the extreme vertices along 14 directions) rather than all 28k
+  vertices; the probe tracks the true minimum to within ~4 mm, well inside the
+  tolerances below.
 
 Usage:  python3 tools/pose_check.py          (from frontend/)
+        python3 tools/pose_check.py --no-mesh    (skip check 7; ~5s faster)
 Exit code 1 on any error.
 """
 
@@ -26,6 +45,7 @@ import math
 import os
 import struct
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND = os.path.dirname(HERE)
@@ -91,13 +111,131 @@ def dist(a, b):
 
 
 def load_gltf(path):
+    return load_glb(path)[0]
+
+
+def load_glb(path):
+    """(json chunk, binary chunk). The binary is what checks 7 skins from."""
     with open(path, "rb") as fh:
         data = fh.read()
-    magic, _version, _length = struct.unpack_from("<III", data, 0)
+    magic, _version, length = struct.unpack_from("<III", data, 0)
     if magic != 0x46546C67:
         raise SystemExit(f"{path} is not a GLB")
-    chunk_len, _chunk_type = struct.unpack_from("<II", data, 12)
-    return json.loads(data[20 : 20 + chunk_len].decode("utf-8"))
+    offset, gltf, binary = 12, None, b""
+    while offset < length:
+        chunk_len, chunk_type = struct.unpack_from("<II", data, offset)
+        payload = data[offset + 8 : offset + 8 + chunk_len]
+        if chunk_type == 0x4E4F534A:  # 'JSON'
+            gltf = json.loads(payload.decode("utf-8"))
+        elif chunk_type == 0x004E4942:  # 'BIN\0'
+            binary = payload
+        offset += 8 + chunk_len
+    if gltf is None:
+        raise SystemExit(f"{path} has no JSON chunk")
+    return gltf, binary
+
+
+# --------------------------------------------------- skinned-mesh floor probe
+
+_COMPONENT = {5120: ("b", 1), 5121: ("B", 1), 5122: ("h", 2),
+              5123: ("H", 2), 5125: ("I", 4), 5126: ("f", 4)}
+_NCOMP = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+
+# 6 axes + 8 diagonals. Enough directions that the extreme vertex of any bone in
+# any pose is almost always already in the set; more of them only costs build time.
+PROBE_DIRECTIONS = [
+    (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1),
+    (1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1),
+    (-1, 1, 1), (-1, 1, -1), (-1, -1, 1), (-1, -1, -1),
+]
+
+
+def read_accessor(gltf, binary, index):
+    acc = gltf["accessors"][index]
+    view = gltf["bufferViews"][acc["bufferView"]]
+    fmt, size = _COMPONENT[acc["componentType"]]
+    n = _NCOMP[acc["type"]]
+    stride = view.get("byteStride") or size * n
+    base = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    return [
+        struct.unpack_from("<" + fmt * n, binary, base + i * stride)
+        for i in range(acc["count"])
+    ]
+
+
+class FloorProbe:
+    """The lowest point of the skinned mesh, for any pose."""
+
+    def __init__(self, gltf, binary, nodes, parent):
+        self.nodes, self.parent = nodes, parent
+        skin = gltf["skins"][0]
+        self.joints = skin["joints"]
+        raw = read_accessor(gltf, binary, skin["inverseBindMatrices"])
+        # glTF stores matrices column-major.
+        self.ibm = [[[m[c * 4 + r] for c in range(4)] for r in range(4)] for m in raw]
+
+        verts = []
+        for mesh in gltf["meshes"]:
+            for prim in mesh["primitives"]:
+                attrs = prim["attributes"]
+                pos = read_accessor(gltf, binary, attrs["POSITION"])
+                jnt = read_accessor(gltf, binary, attrs["JOINTS_0"])
+                wgt = read_accessor(gltf, binary, attrs["WEIGHTS_0"])
+                for i in range(len(pos)):
+                    infl = [(jnt[i][k], wgt[i][k]) for k in range(4) if wgt[i][k] > 0]
+                    if infl:
+                        verts.append((pos[i], infl))
+        self.total = len(verts)
+
+        by_joint = {}
+        for vi, (_pos, infl) in enumerate(verts):
+            for j, _w in infl:
+                by_joint.setdefault(j, []).append(vi)
+
+        keep = set()
+        for indices in by_joint.values():
+            for d in PROBE_DIRECTIONS:
+                best, arg = None, None
+                for vi in indices:
+                    p = verts[vi][0]
+                    s = p[0] * d[0] + p[1] * d[1] + p[2] * d[2]
+                    if best is None or s > best:
+                        best, arg = s, vi
+                keep.add(arg)
+        self.verts = [verts[vi] for vi in sorted(keep)]
+        self.ground = self.lowest({})
+
+    def lowest(self, overrides):
+        world = [world_matrix(self.nodes, self.parent, j, overrides) for j in self.joints]
+        skin = [mat_mul(world[i], self.ibm[i]) for i in range(len(self.joints))]
+        low = None
+        for pos, infl in self.verts:
+            y = 0.0
+            for j, w in infl:
+                m = skin[j]
+                y += w * (m[1][0] * pos[0] + m[1][1] * pos[1] + m[1][2] * pos[2] + m[1][3])
+            if low is None or y < low:
+                low = y
+        return 0.0 if low is None else low
+
+
+def quat_slerp(a, b, t):
+    """three.js Quaternion.slerp — how the mixer gets between two keyframes."""
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    cos = ax * bx + ay * by + az * bz + aw * bw
+    if cos < 0:
+        bx, by, bz, bw, cos = -bx, -by, -bz, -bw, -cos
+    if cos > 0.9995:
+        out = (ax + t * (bx - ax), ay + t * (by - ay),
+               az + t * (bz - az), aw + t * (bw - aw))
+        norm = math.sqrt(sum(c * c for c in out)) or 1.0
+        return tuple(c / norm for c in out)
+    theta = math.acos(cos)
+    sin = math.sin(theta)
+    w1, w2 = math.sin((1 - t) * theta) / sin, math.sin(t * theta) / sin
+    return (ax * w1 + bx * w2, ay * w1 + by * w2,
+            az * w1 + bz * w2, aw * w1 + bw * w2)
 
 
 def build_hierarchy(gltf):
@@ -180,7 +318,8 @@ def pose_overrides(pose, root, root_rot, by_name, rest_rot):
 
 
 def main() -> int:
-    gltf = load_gltf(GLB)
+    gltf, binary = load_glb(GLB)
+    check_mesh = "--no-mesh" not in sys.argv and bool(binary)
     nodes, parent, by_name = build_hierarchy(gltf)
     rest_rot = {
         i: tuple(n.get("rotation", [0, 0, 0, 1])) for i, n in enumerate(nodes)
@@ -360,6 +499,108 @@ def main() -> int:
                     f"{name}: fist extends only {far[2] - rest[2]:.3f} m toward the "
                     "opponent — that is not a straight punch"
                 )
+
+    # --- 7. the floor, on the skinned mesh, between the keyframes -------------
+    #
+    # Tolerances are not zero because the grounding solve targets the TOE JOINT
+    # while this measures the MESH: the rig's rest pose already has ~3 mm of sole
+    # below the toe joint, and every crouch (block_low, the dodges, exhausted)
+    # flexes the sole a little further in — 2.4 cm at the worst, on block_low.
+    # That baseline is inherent to joint-based grounding, not a clip bug, so the
+    # thresholds sit above it. The failure they exist to catch is the 14 cm the
+    # `ko` fall used to plough, and the table below prints every clip's real
+    # figure regardless of whether it trips one.
+    FLOOR_WARN_CM = 3.0
+    FLOOR_ERROR_CM = 4.0
+    FRAME_STEP = 2
+
+    if check_mesh:
+        started = time.time()
+        floor = FloorProbe(gltf, binary, nodes, parent)
+        print()
+        print(
+            f"skinned floor probe: {len(floor.verts)} of {floor.total} vertices, "
+            f"deck at y={floor.ground:+.4f} m"
+        )
+        print(f"{'clip':<12} {'worst frame':>12} {'lowest':>9} {'vs deck':>9}")
+        print("-" * 46)
+
+        for name, clip in lib["clips"].items():
+            keys = clip["keys"]
+            do_ground = clip.get("ground", True)
+
+            # Reproduce clipFactory.ts: the frame-0 solve offsets the whole clip,
+            # and a grounded clip then re-solves every later keyframe on top.
+            clip_dy = 0.0 if do_ground else solve(keys[0]["pose"])[2]
+            roots = []
+            for k in keys:
+                _probe, root_y, dy = solve(k["pose"], clip_dy)
+                if do_ground:
+                    _probe, root_y, dy = solve(k["pose"], dy)
+                _pose, root, _rr = merged_pose(stance, k["pose"])
+                root["y"] = root_y
+                roots.append(root)
+
+            # Per-key quaternion per joint, exactly as the KeyframeTracks carry them.
+            tracks = {}
+            for joint in smap:
+                idx = by_name[BONE_PREFIX + joint]
+                column = []
+                for k in keys:
+                    pose, _root, root_rot = merged_pose(stance, k["pose"])
+                    rot = pose.get(joint, {})
+                    q = quat_mul(
+                        rest_rot[idx],
+                        quat_from_euler_xyz(rot.get("x", 0), rot.get("y", 0), rot.get("z", 0)),
+                    )
+                    if joint == "Hips" and any(root_rot.values()):
+                        q = quat_mul(
+                            quat_from_euler_xyz(root_rot["x"], root_rot["y"], root_rot["z"]), q
+                        )
+                    column.append(q)
+                tracks[joint] = column
+
+            times = [k["f"] for k in keys]
+            hips_idx = by_name[BONE_PREFIX + "Hips"]
+            sampled = sorted(set(range(0, clip["frames"] + 1, FRAME_STEP)) | set(times))
+
+            worst = (None, None)
+            for f in sampled:
+                seg = 0
+                while seg < len(times) - 2 and f > times[seg + 1]:
+                    seg += 1
+                span = times[seg + 1] - times[seg]
+                t = 0.0 if span == 0 else min(max((f - times[seg]) / span, 0.0), 1.0)
+
+                overrides = {}
+                for joint in smap:
+                    idx = by_name[BONE_PREFIX + joint]
+                    overrides[idx] = (
+                        None,
+                        quat_slerp(tracks[joint][seg], tracks[joint][seg + 1], t),
+                    )
+                translation = [
+                    roots[seg][axis] + t * (roots[seg + 1][axis] - roots[seg][axis])
+                    for axis in ("x", "y", "z")
+                ]
+                overrides[hips_idx] = (translation, overrides[hips_idx][1])
+
+                low = floor.lowest(overrides)
+                if worst[1] is None or low < worst[1]:
+                    worst = (f, low)
+
+            frame, low = worst
+            depth_cm = (floor.ground - low) * 100
+            print(f"{name:<12} {frame:>12} {low:>9.4f} {-depth_cm:>+8.1f}cm")
+            if depth_cm > FLOOR_ERROR_CM:
+                errors.append(
+                    f"{name}@f{frame}: mesh {depth_cm:.1f} cm through the floor "
+                    "(joint-space keyframes can pass while the skin does not)"
+                )
+            elif depth_cm > FLOOR_WARN_CM:
+                warnings.append(f"{name}@f{frame}: mesh {depth_cm:.1f} cm through the floor")
+
+        print(f"(mesh pass: {time.time() - started:.1f}s, every {FRAME_STEP} frames)")
 
     print()
     print(f"clips: {len(lib['clips'])}   fps: {fps}")

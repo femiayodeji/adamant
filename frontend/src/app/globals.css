@@ -940,14 +940,125 @@ small.hint {
   letter-spacing: 0.08em;
 }
 
+/* ------------------------------------------------------ replay transport */
+
+.replaybar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.8rem 1.1rem 1rem;
+}
+
+.replaybar .row {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.replaybar button {
+  padding: 0.4rem 0.6rem;
+  min-width: 2.2rem;
+}
+
+.replaybar .speed select {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+/* The fight timeline. One step per tick, so the thumb position IS the tick number
+   and dragging jumps the scene rather than fast-forwarding through it. */
+.scrub {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.scrub:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.scrub::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--a), var(--b));
+  border: 1px solid var(--line-hot);
+}
+
+.scrub::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--a), var(--b));
+  border: 1px solid var(--line-hot);
+}
+
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 18px;
+  margin-top: -7px;
+  border-radius: 2px;
+  background: var(--text);
+  border: 1px solid var(--bg);
+  box-shadow: 0 0 8px rgba(41, 224, 255, 0.55);
+}
+
+.scrub::-moz-range-thumb {
+  width: 14px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--text);
+  border: 1px solid var(--bg);
+  box-shadow: 0 0 8px rgba(41, 224, 255, 0.55);
+}
+
+.scrub:focus-visible {
+  outline: 2px solid var(--a);
+  outline-offset: 3px;
+}
+
+/* The recording tally light, so a capture in progress is never mistaken for a
+   plain replay — the two look identical on the canvas. */
+.move.rec {
+  color: var(--b);
+  border-color: var(--b);
+  animation: tally 1.1s ease-in-out infinite;
+}
+
+@keyframes tally {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The whole fight, not a window onto it. The log is the text record of the match
+   and a reviewer scrubbing the replay needs to read back through it, so nothing is
+   dropped — it scrolls, and it follows the fight only while the reader is already
+   at the end (see `stickToEnd` in Arena.tsx). */
 .ticker {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
   font-family: var(--mono);
   font-size: 0.76rem;
-  max-height: 8.5rem;
-  overflow: hidden;
+  max-height: 18rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-hot) transparent;
+  padding-right: 0.3rem;
+}
+
+.ticker::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ticker::-webkit-scrollbar-thumb {
+  background: var(--line-hot);
+  border-radius: 4px;
 }
 
 .ticker .line {
@@ -959,6 +1070,13 @@ small.hint {
 .ticker .line b {
   color: var(--text);
   font-weight: 600;
+}
+
+/* The tick that is on the canvas right now. Scrubbing the replay moves this
+   marker down the log, which is what makes the log a timeline rather than a list. */
+.ticker .line.now {
+  border-left-color: var(--a);
+  background: rgba(41, 224, 255, 0.06);
 }
 
 .ev-hit {
@@ -988,7 +1106,8 @@ small.hint {
 @media (prefers-reduced-motion: reduce) {
   .call,
   .pips.voided .pip-n,
-  .dot.connecting {
+  .dot.connecting,
+  .move.rec {
     animation: none;
   }
   .bar .fill {

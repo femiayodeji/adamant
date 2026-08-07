@@ -16,7 +16,7 @@ A venv lives at `.venv`. Install with `.venv/bin/pip install -e ".[dev]"`.
 | Balance round-robin, headless | `.venv/bin/python -m server.engine.simulate` |
 | Run the server | `.venv/bin/uvicorn server.main:app --reload` |
 | Frontend | `cd frontend && npm run build` (output `frontend/out/`, served by FastAPI) |
-| Clip library validation, no browser | `cd frontend && npm run poses` |
+| Clip library validation, no browser | `cd frontend && npm run poses` (~12s; `-- --no-mesh` skips the skinned-floor pass) |
 | Reference agent | `.venv/bin/python agents/reference_agent.py --code RUMBLE-4F2 --url ws://localhost:8000` |
 | …as a chosen persona | add `--persona aggressor \| counter_puncher \| economist \| pattern_reader` |
 | Run in Docker | `docker compose up -d --build` → <http://localhost:8000> |
@@ -71,6 +71,12 @@ These are load-bearing across multiple documents; violating one breaks something
 **REST `{ref}` accepts match_id *or* match_code.** Spectators hold only a code; keying read endpoints by ID alone makes Replay impossible for them.
 
 **Clip name IS the action name.** The eight action clips map 1:1 to the eight action names with no mapping table, so a rules-table rename is a clip rename. The other six (`stance`, `hit_react`, `riposte`, `ko`, `exhausted`, `void`) are named after events and states and are reached from `tick.events`, never from `tick.moves` — which is what keeps that 1:1 rule intact. A renderer must check events before animating: a voided action must never play its strike clip.
+
+**The rig keeps its own materials.** `Fighter.skin()` sets a low emissive tint and nothing else — base colour, metalness, roughness and any map come from `xbot.glb` as authored. Corner identity is carried by the rim lights, the deck band, the post cap and the HUD. Don't reintroduce an albedo override; the model on screen should be recognisably the model in the file.
+
+**Clip grounding is checked on the mesh, not on joints.** `pose_check.py` check 7 CPU-skins the real geometry and samples every other frame of every clip, because the two ways a clip goes through the floor are both invisible to joint-at-keyframe checks: joints sit inside the body, and three.js interpolates *between* keyframes on an arc the endpoints don't describe. That combination hid a 14 cm foot-through-the-deck in `ko` behind five clean keyframes. A clip with `"ground": false` owns its leg fold — see `docs/skeleton.md`, "The floor is not a keyframe property".
+
+**Replay seeks are free because state is absolute.** `tick_result.state` carries the full picture per tick (spec §7), so the scrub slider jumps straight to a tick instead of replaying up to it, and the event log is re-derived from the ticks up to the slider. The only history a jump reconstructs by hand is who is already on the floor, read from that tick's HP.
 
 ## Working rules
 

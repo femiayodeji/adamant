@@ -659,7 +659,7 @@
     },
 
     "ko": {
-      "_note": "Terminal — the only clip exempt from returning to STANCE. Stagger, buckle, fall backwards, settle supine with the feet toward the opponent. Root motion is hand-authored, so grounding is off.",
+      "_note": "Terminal — the only clip exempt from returning to STANCE. Stagger, buckle, fall backwards, settle supine with the feet toward the opponent. Root motion is hand-authored, so grounding is off, which makes the LEG FOLD load-bearing: the hips rotate ~88° about a point the legs have to swing clear of, and legs that merely trail the body drag the feet metres-deep through the deck between keyframes. Solved against the skinned mesh, not the toe joints — tools/pose_check.py check 7.",
       "frames": 45,
       "terminal": true,
       "ground": false,
@@ -679,11 +679,11 @@
             "RightShoulder": { "z": -2 },
             "RightArm": { "x": -20, "y": 24, "z": 84 },
             "RightForeArm": { "y": 64 },
-            "LeftUpLeg": { "x": -10, "z": 8 },
-            "LeftLeg": { "x": 16 },
-            "RightUpLeg": { "x": 18, "z": -8 },
-            "RightLeg": { "x": 40 },
-            "_root": { "y": -4, "z": -14 }
+            "LeftUpLeg": { "x": 6, "z": 8 },
+            "LeftLeg": { "x": 22 },
+            "RightUpLeg": { "x": 4, "z": -8 },
+            "RightLeg": { "x": 42 },
+            "_root": { "y": 3, "z": -14 }
           }
         },
         {
@@ -698,10 +698,12 @@
             "LeftForeArm": { "y": -40 },
             "RightArm": { "x": -20, "y": -10, "z": 58 },
             "RightForeArm": { "y": 44 },
-            "LeftUpLeg": { "x": -34, "z": 10 },
-            "LeftLeg": { "x": 66 },
-            "RightUpLeg": { "x": -22, "z": -10 },
-            "RightLeg": { "x": 74 },
+            "LeftUpLeg": { "x": -28, "z": 10 },
+            "LeftLeg": { "x": 60 },
+            "RightUpLeg": { "x": -40, "z": -10 },
+            "RightLeg": { "x": 72 },
+            "LeftFoot": { "x": -2 },
+            "RightFoot": { "x": -4 },
             "_rootRot": { "x": -30 },
             "_root": { "y": -24, "z": -26 }
           }
@@ -721,9 +723,9 @@
             "RightShoulder": { "z": 0 },
             "RightArm": { "x": -10, "y": 8, "z": 36 },
             "RightForeArm": { "y": 30 },
-            "LeftUpLeg": { "x": -14, "z": 12 },
-            "LeftLeg": { "x": 26 },
-            "RightUpLeg": { "x": -10, "z": -10 },
+            "LeftUpLeg": { "x": -22, "z": 12 },
+            "LeftLeg": { "x": 25 },
+            "RightUpLeg": { "x": -16, "z": -10 },
             "RightLeg": { "x": 20 },
             "LeftFoot": { "x": 10 },
             "RightFoot": { "x": 10 },

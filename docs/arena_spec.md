@@ -580,7 +580,22 @@ Three views, one page. Simple, clean, effective — no navigation maze.
 
 1. **Home:** one primary button — **Create Match** — plus a "Watch a match" code input.
 2. **Lobby** (after create): the match code displayed large with a copy button and the join command shown ready to paste (`python agent.py --code RUMBLE-4F2 --url wss://…`); two corner cards that flip from *Waiting…* to the agent's name **and profile** (model, prompt version) on connect; **Add built-in bot** button on each empty corner; **Start Fight** enabled only when both corners are filled. Share link for spectators.
-3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, tick counter, and each fighter's **repeat streak** (§4.6) so a watcher can see the cap coming and read a void when it lands; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason; **Replay** button that re-runs the fight from the log through the same renderer.
+3. **Arena:** Three.js canvas with both fighters; HUD with HP bars, stamina bars, points, penalties, tick counter, and each fighter's **repeat streak** (§4.6) so a watcher can see the cap coming and read a void when it lands; a **paused** overlay when a corner drops (§6.4), showing the resume countdown; end-of-match result banner with the winner and reason; the **event log**; and **Replay** with a transport and a video export.
+
+**Event log.** Every event of the whole fight, in fight order, in a box that scrolls. Nothing is dropped and nothing is windowed out — the log is the readable record of the match, and a reviewer stepping through a replay has to be able to read back through it. It follows the fight automatically only while the reader is already at the end, so scrolling up to re-read an exchange is never yanked away by the next tick.
+
+**Replay.** Fetches the stored log (§8) and pushes the same `tick_result` objects through the same renderer — no second implementation. On top of that it exposes a transport:
+
+| Control | Behaviour |
+|---|---|
+| Slider | One step per tick, spanning the fight. Dragging **jumps** the scene rather than fast-forwarding to it. |
+| Step / first / last | Single-tick moves, for frame-accurate review. |
+| Play / pause | At the end of the fight, Play restarts from the top. |
+| Speed | 0.25× / 0.5× / 1× / 2× / 4×, applied to both the feed rate and the clip time scale. |
+
+A jump is cheap because `tick_result.state` is **absolute** (§7): any single tick is the whole picture, so seeking never has to replay the ticks before it to reconstruct HP, stamina, points, or the repeat streak. The one piece of history a jump must restore by hand is whether a fighter is already on the floor, which it reads from the HP in the tick it lands on. The event log is re-derived from the ticks up to the slider position, so scrubbing backwards shortens it.
+
+**Video export.** *Download video* records a replay to a file. The HUD is DOM rather than WebGL, so a raw canvas capture would have no scoreboard; the frame and a repainted scoreboard are composited into a second canvas, and that is what `MediaRecorder` encodes. Recording always runs at 1× whatever speed the viewer was reviewing at. MP4/H.264 is used where the browser can encode it (Chromium 126+, Safari) and WebM otherwise (Firefox has no MP4 encoder) — the file is named with the extension it actually is, and the UI says which was produced rather than promising an MP4 and writing something else into it.
 
 Spectators who open the watch link during the lobby see the corner status; during the fight they see the arena live.
 

@@ -1,28 +1,39 @@
 'use client';
 
 /**
- * View 3 of spec 9: the canvas, the HUD, the paused overlay, the end banner, and
- * Replay.
+ * View 3 of spec §9: the canvas, the HUD, the paused overlay, the end banner, the
+ * event log, and Replay.
  *
- * Replay is not a second renderer. It fetches the stored log (spec 8, `GET
+ * Replay is not a second renderer. It fetches the stored log (spec §8, `GET
  * /api/matches/{ref}/log`, keyed by the match CODE so a spectator can use it too)
  * and pushes the very same `tick_result` objects into the very same
  * `ArenaRenderer.pushTick`, paced by the renderer's own backlog.
+ *
+ * The transport — scrub, step, speed — rests on one property of the wire format:
+ * `tick_result.state` is ABSOLUTE, so any single tick is the whole picture and a
+ * jump never has to replay what came before it to reconstruct anything. The one
+ * exception is whether a fighter is already on the floor, which `scrubTo` restores
+ * from the HP in that tick.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError, getLog } from '@/lib/api';
 import {
+  CORNERS,
   MAX_CONSECUTIVE_REPEATS,
   type ArenaEvent,
   type Corner,
   type FighterState,
+  type MatchEnd,
   type MatchLog,
+  type TickResult,
 } from '@/lib/types';
 import type { MatchView } from '@/lib/useMatchFeed';
 import { ArenaRenderer, type HudSnapshot } from '@/renderer/arenaRenderer';
+import { pickVideoFormat, ReplayRecorder, saveBlob } from '@/renderer/recorder';
 import type { TickSink } from '@/renderer/tickSink';
+import { paintOverlay, type OverlayData } from '@/renderer/videoOverlay';
 
 const FULL: FighterState = {
   hp: 100,
@@ -32,7 +43,31 @@ const FULL: FighterState = {
   last_action: null,
   repeat_streak: 0,
 };
-const MAX_TICKER = 6;
+
+const SPEEDS = [0.25, 0.5, 1, 2, 4] as const;
+/** How long the end card is held on screen at the end of a recorded replay. */
+const END_CARD_MS = 1800;
+
+interface LogRow {
+  tick: number;
+  event: ArenaEvent;
+}
+
+/** Flatten ticks to log rows in fight order — the same shape the live feed builds. */
+function rowsOf(ticks: TickResult[]): LogRow[] {
+  const rows: LogRow[] = [];
+  for (const tick of ticks) {
+    for (const event of tick.events ?? []) rows.push({ tick: tick.tick, event });
+  }
+  return rows;
+}
+
+/** Corners already down at `index` — what a jump has to restore. */
+function downAt(ticks: TickResult[], index: number): Corner[] {
+  const state = ticks[index]?.state;
+  if (!state) return [];
+  return CORNERS.filter((corner) => (state[corner]?.hp ?? 100) <= 0);
+}
 
 interface ArenaProps {
   code: string | null;
@@ -42,28 +77,66 @@ interface ArenaProps {
   demoLog: () => MatchLog | null;
 }
 
+interface Transport {
+  playing: boolean;
+  speed: number;
+  /** Index of the tick currently on screen. */
+  position: number;
+  total: number;
+}
+
 export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<ArenaRenderer | null>(null);
-  const replayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /** The loaded log, plus the cursor of what has been fed to the renderer. Held in
+   *  a ref because the playback interval must not be torn down on every position
+   *  change — only on play/pause and speed. */
+  const session = useRef<{ ticks: TickResult[]; end: MatchEnd | null } | null>(null);
+  const feed = useRef(0);
+  const recorder = useRef<ReplayRecorder | null>(null);
+  const overlay = useRef<OverlayData | null>(null);
+  const logBox = useRef<HTMLDivElement | null>(null);
+  const stickToEnd = useRef(true);
 
   const [hud, setHud] = useState<HudSnapshot | null>(null);
-  const [ticker, setTicker] = useState<{ tick: number; event: ArenaEvent }[]>([]);
+  const [liveRows, setLiveRows] = useState<LogRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [replaying, setReplaying] = useState(false);
+  const [transport, setTransport] = useState<Transport | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
+  const [recording, setRecording] = useState<'running' | null>(null);
+  const [videoNote, setVideoNote] = useState<string | null>(null);
   const [drained, setDrained] = useState(false);
+
+  const replaying = transport !== null;
 
   const onHud = useCallback((snapshot: HudSnapshot) => {
     setHud(snapshot);
+    if (overlay.current) {
+      overlay.current = {
+        ...overlay.current,
+        tick: snapshot.tick,
+        state: snapshot.state,
+        events: snapshot.events,
+      };
+    }
+    // While replaying, the log is derived from the scrub position instead — a
+    // jump backwards has to shorten it, which an append-only list cannot do.
+    if (session.current) {
+      const at = session.current.ticks.findIndex((t) => t.tick === snapshot.tick);
+      if (at >= 0) {
+        setTransport((prev) =>
+          !prev || prev.position === at ? prev : { ...prev, position: at },
+        );
+      }
+      return;
+    }
     if (snapshot.events.length > 0) {
-      setTicker((rows) =>
-        [...snapshot.events.map((event) => ({ tick: snapshot.tick, event })), ...rows].slice(
-          0,
-          MAX_TICKER,
-        ),
-      );
+      setLiveRows((rows) => [
+        ...rows,
+        ...snapshot.events.map((event) => ({ tick: snapshot.tick, event })),
+      ]);
     }
   }, []);
 
@@ -91,19 +164,22 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
     return () => {
       cancelled = true;
       sink.detach();
+      recorder.current?.dispose();
+      recorder.current = null;
       rendererRef.current?.dispose();
       rendererRef.current = null;
-      if (replayTimer.current) clearInterval(replayTimer.current);
     };
   }, [onHud, sink]);
 
   // Stop burning GPU on a backgrounded tab; the queue picks up where it left off.
+  // Not while recording, though — a paused renderer emits duplicate frames and the
+  // capture would show the fight freezing.
   useEffect(() => {
     const onVisibility = () =>
-      rendererRef.current?.setPaused(document.visibilityState === 'hidden');
+      rendererRef.current?.setPaused(!recording && document.visibilityState === 'hidden');
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, []);
+  }, [recording]);
 
   // The banner waits for the animation to catch up with the result — the last
   // clips are usually still playing when `match_end` lands.
@@ -118,57 +194,262 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
     return () => clearInterval(id);
   }, [view.phase, replaying]);
 
-  /* ------------------------------------------------------------- replay */
+  /* --------------------------------------------------------------- names */
 
-  const startReplay = useCallback(async () => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
+  const names: Record<Corner, string> = useMemo(
+    () => ({
+      agent_a: view.corners.agent_a?.name ?? 'Corner A',
+      agent_b: view.corners.agent_b?.name ?? 'Corner B',
+    }),
+    [view.corners],
+  );
+  const maxTicks = view.config?.max_ticks ?? 60;
+
+  /* -------------------------------------------------------------- replay */
+
+  const loadLog = useCallback(async (): Promise<MatchLog | null> => {
     setReplayError(null);
-    let log: MatchLog | null = null;
     try {
-      log = demo ? demoLog() : code ? await getLog(code) : null;
+      const log = demo ? demoLog() : code ? await getLog(code) : null;
+      if (!log || log.ticks.length === 0) {
+        setReplayError('No log to replay yet.');
+        return null;
+      }
+      return log;
     } catch (err) {
       setReplayError(err instanceof ApiError ? err.message : String(err));
-      return;
+      return null;
     }
-    if (!log || log.ticks.length === 0) {
-      setReplayError('No log to replay yet.');
-      return;
-    }
+  }, [code, demo, demoLog]);
 
-    renderer.reset();
-    setTicker([]);
+  const begin = useCallback(
+    (log: MatchLog, speed: number) => {
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      session.current = { ticks: log.ticks, end: log.match_end };
+      feed.current = 0;
+      renderer.reset();
+      renderer.setSpeed(speed);
+      setHud(null);
+      setTransport({ playing: true, speed, position: 0, total: log.ticks.length });
+      stickToEnd.current = true;
+    },
+    [],
+  );
+
+  const startReplay = useCallback(async () => {
+    const log = await loadLog();
+    if (log) begin(log, 1);
+  }, [begin, loadLog]);
+
+  const exitReplay = useCallback(() => {
+    session.current = null;
+    feed.current = 0;
+    setTransport(null);
+    const renderer = rendererRef.current;
+    renderer?.setSpeed(1);
+    renderer?.reset();
     setHud(null);
-    setReplaying(true);
+  }, []);
 
-    let index = 0;
-    if (replayTimer.current) clearInterval(replayTimer.current);
-    replayTimer.current = setInterval(() => {
-      const active = rendererRef.current;
-      if (!active) return;
-      if (index >= log.ticks.length) {
-        if (active.idle) {
-          if (replayTimer.current) clearInterval(replayTimer.current);
-          replayTimer.current = null;
-          setReplaying(false);
-        }
+  const seek = useCallback((index: number) => {
+    const active = session.current;
+    const renderer = rendererRef.current;
+    if (!active || !renderer) return;
+    const at = Math.max(0, Math.min(index, active.ticks.length - 1));
+    feed.current = at + 1;
+    renderer.scrubTo(active.ticks[at], downAt(active.ticks, at));
+    setTransport((prev) => (prev ? { ...prev, position: at } : prev));
+  }, []);
+
+  const setSpeed = useCallback((speed: number) => {
+    rendererRef.current?.setSpeed(speed);
+    setTransport((prev) => (prev ? { ...prev, speed } : prev));
+  }, []);
+
+  /** Play/pause — and, at the end of the fight, Play means "run it again". A restart
+   *  rewinds the feed rather than seeking, so tick 1 is animated instead of being
+   *  posed statically the way a scrub target is. */
+  const togglePlay = useCallback(() => {
+    if (!transport) return;
+    if (!transport.playing && transport.position >= transport.total - 1) {
+      rendererRef.current?.reset();
+      feed.current = 0;
+      setHud(null);
+      stickToEnd.current = true;
+      setTransport((prev) => (prev ? { ...prev, playing: true, position: 0 } : prev));
+      return;
+    }
+    setTransport((prev) => (prev ? { ...prev, playing: !prev.playing } : prev));
+  }, [transport]);
+
+  /* The playback pump. Feeds the renderer only when it has room, so the fight
+   * plays at animation speed rather than log speed; `speed` scales both the pump
+   * period and the renderer's own clip time scale. */
+  const finish = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (!transport?.playing) return;
+    const period = Math.max(25, Math.round(110 / transport.speed));
+    const id = setInterval(() => {
+      const renderer = rendererRef.current;
+      const active = session.current;
+      if (!renderer || !active) return;
+
+      if (feed.current < active.ticks.length) {
+        if (renderer.backlog < 2) renderer.pushTick(active.ticks[feed.current++]);
         return;
       }
-      // Backpressure instead of a fixed frame budget: push only when the renderer
-      // has room, so replay plays at animation speed rather than log speed.
-      if (active.backlog < 2) active.pushTick(log.ticks[index++]);
-    }, 120);
-  }, [code, demo, demoLog]);
+      if (renderer.idle) {
+        setTransport((prev) =>
+          prev ? { ...prev, playing: false, position: prev.total - 1 } : prev,
+        );
+        finish.current?.();
+      }
+    }, period);
+    return () => clearInterval(id);
+  }, [transport?.playing, transport?.speed]);
+
+  /* ------------------------------------------------------- video capture */
+
+  const format = useMemo(() => (ready ? pickVideoFormat() : null), [ready]);
+
+  const downloadVideo = useCallback(async () => {
+    const renderer = rendererRef.current;
+    const canvas = canvasRef.current;
+    if (!renderer || !canvas) return;
+    if (!format) {
+      setReplayError('This browser cannot record video.');
+      return;
+    }
+    const log = await loadLog();
+    if (!log) return;
+
+    overlay.current = {
+      code,
+      names,
+      state: { agent_a: FULL, agent_b: FULL },
+      tick: 0,
+      maxTicks,
+      events: [],
+      end: null,
+    };
+
+    let capture: ReplayRecorder;
+    try {
+      capture = new ReplayRecorder(
+        canvas,
+        (ctx, w, h) => overlay.current && paintOverlay(ctx, w, h, overlay.current),
+        format,
+      );
+    } catch (err) {
+      setReplayError(String(err));
+      return;
+    }
+    recorder.current = capture;
+    setVideoNote(null);
+    setRecording('running');
+
+    // Recording is always at 1x: the file should play back as the fight was fought,
+    // whatever speed the viewer happened to be reviewing at.
+    begin(log, 1);
+    renderer.setFrameHook(capture.composite);
+    capture.start();
+
+    finish.current = () => {
+      finish.current = null;
+      if (overlay.current && log.match_end) {
+        overlay.current = { ...overlay.current, end: log.match_end };
+      }
+      // Hold the end card, then cut. The frame hook stays attached for it.
+      window.setTimeout(async () => {
+        renderer.setFrameHook(null);
+        const blob = await capture.stop();
+        capture.dispose();
+        recorder.current = null;
+        overlay.current = null;
+        setRecording(null);
+        if (blob.size === 0) {
+          setReplayError('The recording came back empty.');
+          return;
+        }
+        saveBlob(blob, `${code ?? 'adam-arena'}-replay.${capture.format.ext}`);
+        setVideoNote(
+          capture.format.ext === 'mp4'
+            ? `Saved ${(blob.size / 1e6).toFixed(1)} MB as MP4.`
+            : `Saved ${(blob.size / 1e6).toFixed(1)} MB as WebM — this browser has no MP4 encoder.`,
+        );
+      }, END_CARD_MS);
+    };
+  }, [begin, code, format, loadLog, maxTicks, names]);
+
+  /**
+   * Watchdog.
+   *
+   * A capture is only as alive as the render loop feeding it: `composite()` runs
+   * from the renderer's frame hook, so if `requestAnimationFrame` stops — a
+   * throttled background tab, a lost GPU context, a headless browser with no
+   * compositor — no frames reach the encoder, the replay never advances, and the
+   * transport sits on "Recording…" with no way out. Give up loudly instead.
+   */
+  useEffect(() => {
+    if (recording !== 'running') return;
+    let stalledFor = 0;
+    let seen = -1;
+    const id = setInterval(() => {
+      if (feed.current !== seen) {
+        seen = feed.current;
+        stalledFor = 0;
+        return;
+      }
+      stalledFor += 1;
+      if (stalledFor < 6) return; // 30 s of no progress
+      clearInterval(id);
+      finish.current = null;
+      rendererRef.current?.setFrameHook(null);
+      recorder.current?.dispose();
+      recorder.current = null;
+      overlay.current = null;
+      setRecording(null);
+      setTransport((prev) => (prev ? { ...prev, playing: false } : prev));
+      setReplayError(
+        'Recording stalled — the page stopped drawing frames. Keep this tab in the ' +
+          'foreground and try again.',
+      );
+    }, 5000);
+    return () => clearInterval(id);
+  }, [recording]);
+
+  /* ----------------------------------------------------------- event log */
+
+  const rows = useMemo(() => {
+    if (transport && session.current) {
+      return rowsOf(session.current.ticks.slice(0, transport.position + 1));
+    }
+    return liveRows;
+  }, [transport, liveRows]);
+
+  // Follow the fight, but never yank the view away from someone reading back.
+  useEffect(() => {
+    const box = logBox.current;
+    if (!box || !stickToEnd.current) return;
+    box.scrollTop = box.scrollHeight;
+  }, [rows]);
+
+  const onLogScroll = useCallback(() => {
+    const box = logBox.current;
+    if (!box) return;
+    stickToEnd.current = box.scrollHeight - box.scrollTop - box.clientHeight < 28;
+  }, []);
 
   /* --------------------------------------------------------------- view */
 
-  const names: Record<Corner, string> = {
-    agent_a: view.corners.agent_a?.name ?? 'Corner A',
-    agent_b: view.corners.agent_b?.name ?? 'Corner B',
-  };
   const state = hud?.state ?? view.end?.final_state ?? { agent_a: FULL, agent_b: FULL };
-  const maxTicks = view.config?.max_ticks ?? 60;
+  /** The tick on the canvas right now — the log marks its rows so the reader can
+   *  see where on the timeline the picture is. */
+  const currentTick = hud?.tick ?? -1;
   const showEnd = view.phase === 'ended' && drained && !replaying && view.end;
+  const canReplay = view.phase === 'ended' || demo;
 
   return (
     <div className="stack">
@@ -195,7 +476,8 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
             {hud?.moves.agent_b && (
               <MoveChip corner="agent_b" move={hud.moves.agent_b} events={hud.events} />
             )}
-            {replaying && <span className="move mono">replay</span>}
+            {replaying && !recording && <span className="move mono">replay</span>}
+            {recording && <span className="move mono rec">● recording</span>}
             {(hud?.backlog ?? 0) > 2 && (
               <span className="move mono muted">+{hud?.backlog} queued</span>
             )}
@@ -247,22 +529,146 @@ export function Arena({ code, view, sink, demo, demoLog }: ArenaProps) {
         )}
       </div>
 
+      {transport && (
+        <ReplayBar
+          transport={transport}
+          recording={recording !== null}
+          canRecord={format !== null}
+          ticks={session.current?.ticks ?? []}
+          onSeek={seek}
+          onSpeed={setSpeed}
+          onToggle={togglePlay}
+          onExit={exitReplay}
+          onDownload={downloadVideo}
+        />
+      )}
+
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h2>Event log</h2>
-          {view.phase === 'ended' && !showEnd && !replaying && (
-            <button onClick={startReplay}>Replay</button>
-          )}
+          <div className="row">
+            <span className="chip mono muted">{rows.length} events</span>
+            {canReplay && !replaying && <button onClick={startReplay}>Replay</button>}
+            {canReplay && !replaying && format && (
+              <button onClick={downloadVideo}>Download video</button>
+            )}
+          </div>
         </div>
-        <div className="ticker" style={{ marginTop: '0.6rem' }}>
-          {ticker.length === 0 && <span className="line">Waiting for the first tick…</span>}
-          {ticker.map((row, i) => (
-            <span className="line" key={`${row.tick}-${i}`}>
+        {videoNote && <small className="hint">{videoNote}</small>}
+        {replayError && !showEnd && <div className="error">{replayError}</div>}
+        <div className="ticker" ref={logBox} onScroll={onLogScroll} style={{ marginTop: '0.6rem' }}>
+          {rows.length === 0 && <span className="line">Waiting for the first tick…</span>}
+          {rows.map((row, i) => (
+            <span
+              className={`line${row.tick === currentTick ? ' now' : ''}`}
+              key={`${row.tick}-${i}`}
+            >
               <b className="mono">t{row.tick}</b> <EventLine event={row.event} names={names} />
             </span>
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The replay transport. The slider is the fight timeline: one step per tick, and
+ * dragging it jumps the scene rather than fast-forwarding through it.
+ */
+function ReplayBar({
+  transport,
+  recording,
+  canRecord,
+  ticks,
+  onSeek,
+  onSpeed,
+  onToggle,
+  onExit,
+  onDownload,
+}: {
+  transport: Transport;
+  recording: boolean;
+  canRecord: boolean;
+  ticks: TickResult[];
+  onSeek: (index: number) => void;
+  onSpeed: (speed: number) => void;
+  onToggle: () => void;
+  onExit: () => void;
+  onDownload: () => void;
+}) {
+  const last = Math.max(0, transport.total - 1);
+  const shown = ticks[transport.position]?.tick ?? transport.position + 1;
+  const finalTick = ticks[last]?.tick ?? transport.total;
+
+  return (
+    <div className="card replaybar">
+      <div className="row">
+        <button onClick={() => onSeek(0)} disabled={recording} title="Back to the first tick">
+          ⏮
+        </button>
+        <button
+          onClick={() => onSeek(transport.position - 1)}
+          disabled={recording || transport.position <= 0}
+          title="Previous tick"
+        >
+          ◀
+        </button>
+        <button className="primary" onClick={onToggle} disabled={recording}>
+          {transport.playing ? '❚❚ Pause' : '▶ Play'}
+        </button>
+        <button
+          onClick={() => onSeek(transport.position + 1)}
+          disabled={recording || transport.position >= last}
+          title="Next tick"
+        >
+          ▶
+        </button>
+        <button onClick={() => onSeek(last)} disabled={recording} title="Jump to the last tick">
+          ⏭
+        </button>
+
+        <span className="chip mono">
+          tick {String(shown).padStart(2, '0')}/{finalTick}
+        </span>
+
+        <span className="spacer" />
+
+        <label className="speed">
+          <span className="sr-only">Playback speed</span>
+          <select
+            value={transport.speed}
+            disabled={recording}
+            onChange={(e) => onSpeed(Number(e.target.value))}
+          >
+            {SPEEDS.map((s) => (
+              <option key={s} value={s}>
+                {s}×
+              </option>
+            ))}
+          </select>
+        </label>
+        {canRecord && (
+          <button onClick={onDownload} disabled={recording}>
+            {recording ? 'Recording…' : 'Download video'}
+          </button>
+        )}
+        <button onClick={onExit} disabled={recording}>
+          Close
+        </button>
+      </div>
+
+      <input
+        className="scrub"
+        type="range"
+        min={0}
+        max={last}
+        step={1}
+        value={transport.position}
+        disabled={recording}
+        aria-label={`Fight timeline, tick ${shown} of ${finalTick}`}
+        onChange={(e) => onSeek(Number(e.target.value))}
+      />
     </div>
   );
 }
@@ -339,7 +745,7 @@ function Gauge({
 }
 
 /**
- * The repeat cap made visible (spec 4.6). Three pips fill as the same action is
+ * The repeat cap made visible (spec §4.6). Three pips fill as the same action is
  * resubmitted; the third goes hot because the next repeat is the one that voids.
  * Never colour alone — the count is printed as `n/3`, and a void reads as the word.
  */

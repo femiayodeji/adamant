@@ -6,7 +6,9 @@ The joint map for the **Mixamo Xbot** rig (`statics/models/xbot.glb`), plus the 
 
 **How to read the map:** all rotations are **offsets from the T-pose rest position, in degrees**. `0` on every axis is the rest pose. `range` is the usable envelope for each axis; going outside it produces visible mesh deformation. The `note` on each joint describes what its axes do in plain English, which is what makes the map usable directly in an LLM prompt for pose generation.
 
-Every bone's rest rotation in `xbot.glb` is identity, so all bones share the model's axis frame — verified by `frontend/tools/pose_check.py`, which validates the clip library as data (joint names, axis ranges, stance anchoring, loop seams, and FK sanity) without a browser. `frontend/src/renderer/skeleton-map.json` is the machine-readable copy this file describes; keep the two in sync.
+Every bone's rest rotation in `xbot.glb` is identity, so all bones share the model's axis frame — verified by `frontend/tools/pose_check.py`, which validates the clip library as data (joint names, axis ranges, stance anchoring, loop seams, FK sanity, and the skinned mesh against the floor) without a browser. `frontend/src/renderer/skeleton-map.json` is the machine-readable copy this file describes; keep the two in sync.
+
+**The rig renders in its own materials.** `xbot.glb` carries them — two `MeshStandard` materials, no textures — and the renderer leaves base colour, metalness and roughness exactly as authored. Corner identity is carried by things that do not touch the model's albedo: a per-corner rim light, the deck band and post cap under each fighter, a low emissive tint, and the HUD. That emissive is also the channel the hit flash drives, which is why the materials are still cloned per corner even though nothing else about them differs.
 
 ---
 
@@ -168,6 +170,18 @@ Non-negotiable, and the reason is the clip queue. Ticks can resolve faster than 
 The map defines rotations only, and two things cannot be authored without translation. `ko` must end on the floor — an ~88° whole-body rotation plus an ~87 cm pelvis drop, which as a `Hips` rotation would blow through the documented ±35° even though nothing deforms. And **every crouch** (`block_low`, `block_high`, both dodges): bending the knees in pure FK *lifts the feet*, it does not lower the hips, so a crouch without translation walks the fighter into the air.
 
 Two renderer-level keys, explicitly not joints, cover this: **`_root`** (Hips translation in rig units, fighter-local) and **`_rootRot`** (whole-body rotation pre-multiplied onto the Hips). `_root.y` is normally *solved*, not authored — `clipFactory` grounds each keyframe so the lowest toe stays on the canvas. `ko` opts out with `"ground": false` and authors its own fall.
+
+### The floor is not a keyframe property
+
+Opting out of grounding puts the whole fall on the author, and there are two ways to get it wrong that inspecting the keyframes will not reveal.
+
+**Joints are not the body.** The grounding solve targets the toe *joint*, which sits inside the foot. In the rest pose the sole is already ~3 mm below it, and a bent-knee crouch flexes it a couple of centimetres further — so every clip in the library sits slightly *in* the deck, by design and harmlessly (0.4 cm for a jab, 2.4 cm at the worst, on `block_low`). What that tolerance also hides is a foot that is genuinely buried: an ankle can be a comfortable 8 cm above the deck while the foot around it is not.
+
+**Frames between keyframes are not interpolations of their heights.** three.js slerps the rotations and lerps the hips path independently. Pair a large `_rootRot` with a large `_root.y` drop across one segment and the limbs sweep on an arc the two endpoints say nothing about. The `ko` fall did exactly this: every keyframe passed every check, and the right foot still ploughed **14 cm** through the deck for most of a second, because the legs were authored to trail the body while the hips rotated ~88° about a point the legs had to swing clear of.
+
+The fix was not in the fall — `_root.y` and `_rootRot.x` are unchanged — but in the **leg fold**: the hips flex harder through the middle of the fall so the trailing foot lifts, the way a real body's legs do on the way down. The clip now bottoms out 0.4 cm into the deck, the shallowest in the library.
+
+So: when a clip authors its own root motion, the legs are load-bearing, and **`tools/pose_check.py` check 7 is what proves it** — it skins the real mesh (vertex weights, joint matrices, inverse bind matrices) and evaluates the true lowest vertex at every other frame of every clip, not at keyframes and not on joints.
 
 ### Action-to-clip binding
 

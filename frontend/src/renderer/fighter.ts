@@ -20,54 +20,10 @@ import { STANCE_CLIP } from './clipTypes';
 
 const FADE = 0.07;
 
-/** Resting emissive on the chassis: enough to read as powered, not enough to glow. */
-const BASE_EMISSIVE = 0.055;
+/** Resting emissive tint. Low on purpose: it identifies the corner without
+ *  repainting the model. The rig's own colours are what the viewer should read. */
+const BASE_EMISSIVE = 0.075;
 
-/**
- * Panel lines and machining noise, as a roughness map. One canvas shared by both
- * corners: bare metal with a uniform roughness reads as liquid, and this is the
- * cheapest way to break up the highlight into plate segments without touching
- * geometry or shipping a texture file.
- */
-let PANELS: THREE.Texture | null = null;
-
-function panelTexture(): THREE.Texture {
-  if (PANELS) return PANELS;
-  const size = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-
-  ctx.fillStyle = '#4a4a4a';
-  ctx.fillRect(0, 0, size, size);
-
-  // Brushed grain.
-  for (let i = 0; i < 2600; i++) {
-    const v = 40 + Math.floor(Math.random() * 90);
-    ctx.fillStyle = `rgb(${v},${v},${v})`;
-    ctx.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 9, 1);
-  }
-  // Plate seams: rough grooves, so the specular breaks along them.
-  ctx.strokeStyle = '#d8d8d8';
-  ctx.lineWidth = 2;
-  for (const y of [0.14, 0.38, 0.52, 0.79]) {
-    ctx.beginPath();
-    ctx.moveTo(0, y * size);
-    ctx.lineTo(size, y * size);
-    ctx.stroke();
-  }
-  for (const x of [0.22, 0.61, 0.88]) {
-    ctx.beginPath();
-    ctx.moveTo(x * size, 0);
-    ctx.lineTo(x * size, size);
-    ctx.stroke();
-  }
-
-  PANELS = new THREE.CanvasTexture(canvas);
-  PANELS.wrapS = PANELS.wrapT = THREE.RepeatWrapping;
-  PANELS.repeat.set(4, 4);
-  return PANELS;
-}
 /** Flash decay, in units of `flash` per second. ~0.3 s from a full hit back to rest. */
 const FLASH_DECAY = 3.4;
 
@@ -126,28 +82,25 @@ export class Fighter {
   }
 
   /**
-   * Turn the rig into a machine in this corner's colour: dark anodised plate, high
-   * metalness so the environment does the shaping, flat shading for panel facets,
-   * and a low emissive so the fighter reads as powered-on against a dark arena.
-   * The accent lives in the emissive, which is also the channel `pulse` drives.
+   * Adopt this corner's colour WITHOUT repainting the model.
+   *
+   * The rig in `xbot.glb` carries its own materials, and they are what a viewer
+   * should recognise on the canvas — so base colour, map, metalness and roughness
+   * are all left exactly as the file authored them. Corner identity is carried by
+   * three things that do not touch the albedo: the per-corner rim light in
+   * `ArenaRenderer.buildStage`, the deck band and post cap under each fighter, and
+   * the low emissive tint set here.
+   *
+   * The materials are still CLONED per corner, because the emissive is also the
+   * channel `pulse` drives — two corners sharing one material would flash together.
    */
   skin(color: number): void {
     this.tone.set(color);
-    const panels = panelTexture();
     this.group.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
       const source = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       const material = (source as THREE.MeshStandardMaterial).clone();
-      // Drop the rig's own skin texture: with it in place this is a person in a
-      // coloured suit. Without it, and at metalness 1, the shape is described
-      // entirely by what it reflects — which is what makes it read as a machine.
-      material.map = null;
-      material.color = new THREE.Color(color).multiplyScalar(0.075);
-      material.metalness = 1;
-      material.roughness = 0.45;
-      material.roughnessMap = panels;
-      material.flatShading = true;
       material.emissive = this.tone.clone();
       material.emissiveIntensity = BASE_EMISSIVE;
       material.needsUpdate = true;
@@ -182,11 +135,50 @@ export class Fighter {
     if (this.current === null) this.advance();
   }
 
-  clear(): void {
+  /**
+   * Jump straight to the settled end of the KO clip, skipping the fall.
+   *
+   * Scrubbing a replay to a tick after the knockout must show the fighter already
+   * on the floor: replaying the fall every time the slider moves would make the
+   * timeline unreadable, and leaving it standing would contradict the HP the HUD
+   * is printing for that same tick.
+   */
+  snapToKo(): void {
+    const clip = this.clips.get('ko');
+    const action = this.actions.get('ko');
+    if (!clip || !action) return;
     this.queue = [];
+
+    // Deliberately NOT `play('ko')` + `mixer.setTime(duration)`.
+    //
+    // `fadeIn`/`fadeOut` schedule their weight interpolants against the MIXER
+    // clock, which by this point is however many seconds the tab has been open.
+    // `setTime` rewinds that clock to zero, so every fade in flight then gets
+    // evaluated far before its own start and returns its *starting* value — the
+    // incoming ko clip pinned at weight 0, the outgoing stance at weight 1. The
+    // fighter stays standing while the HUD prints 0 HP.
+    //
+    // A jump has no previous pose worth blending from anyway, so: no fades, set
+    // the weight outright, set the clip time directly, and flush it to the bones
+    // with a zero-length update.
+    for (const [name, other] of this.actions) {
+      other.stopFading();
+      if (name !== 'ko') other.stop();
+    }
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.setEffectiveTimeScale(1);
+    action.setEffectiveWeight(1);
+    action.play();
+    action.time = clip.duration;
+    // Paused before the flush, so this update and every later one leave it here.
+    action.paused = true;
+    this.mixer.update(0);
+
+    this.terminal = true;
     this.current = null;
-    this.terminal = false;
-    this.playStance(FADE);
+    this.remaining = 0;
   }
 
   /** Snap everything back to the stance loop — used by Replay and by reset. */
@@ -210,7 +202,7 @@ export class Fighter {
       this.flash = Math.max(0, this.flash - dt * FLASH_DECAY);
       for (const material of this.materials) {
         material.emissive.copy(this.tone).lerp(this.flashTone, Math.min(1, this.flash));
-        material.emissiveIntensity = BASE_EMISSIVE + this.flash * 1.9;
+        material.emissiveIntensity = BASE_EMISSIVE + this.flash * 1.5;
       }
     }
     if (this.current !== null) {

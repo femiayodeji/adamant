@@ -70,6 +70,16 @@ export class Sparks {
     }
   }
 
+  /** Kill every live particle — a replay jump must not carry the last hit's sparks
+   *  into the tick it lands on. */
+  clear(): void {
+    for (let i = 0; i < SPARK_COUNT; i++) {
+      this.life[i] = 0;
+      this.positions[i * 3 + 1] = -50;
+    }
+    this.points.geometry.attributes.position.needsUpdate = true;
+  }
+
   update(dt: number): void {
     let live = false;
     for (let i = 0; i < SPARK_COUNT; i++) {
