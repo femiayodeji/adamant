@@ -6,6 +6,8 @@ The joint map for the **Mixamo Xbot** rig (`statics/models/xbot.glb`), plus the 
 
 **How to read the map:** all rotations are **offsets from the T-pose rest position, in degrees**. `0` on every axis is the rest pose. `range` is the usable envelope for each axis; going outside it produces visible mesh deformation. The `note` on each joint describes what its axes do in plain English, which is what makes the map usable directly in an LLM prompt for pose generation.
 
+Every bone's rest rotation in `xbot.glb` is identity, so all bones share the model's axis frame — verified by `frontend/tools/pose_check.py`, which validates the clip library as data (joint names, axis ranges, stance anchoring, loop seams, and FK sanity) without a browser. `frontend/src/renderer/skeleton-map.json` is the machine-readable copy this file describes; keep the two in sync.
+
 ---
 
 ## Skeleton Map
@@ -55,7 +57,7 @@ SKELETON_MAP = {
     "LeftArm": {
         "axes": ["x", "y", "z"],
         "range": {"x": [-80, 80], "y": [-90, 90], "z": [-90, 180]},
-        "note": "Upper arm. T-pose=0. x: swing fwd(+)/back(−). y: twist/roll. z: raise overhead(+)/lower to side(−). −90z = arm hanging at side. Combine with shoulder, forearm, hand, spine, and hips for reaching and expressive human gestures."
+        "note": "Upper arm. T-pose=0. x: twist/roll along the bone. y: swing fwd(−)/back(+). z: raise overhead(+)/lower to side(−). −90z = arm hanging at side. Combine with shoulder, forearm, hand, spine, and hips for reaching and expressive human gestures."
     },
     "LeftForeArm": {
         "axes": ["x", "y"],
@@ -75,7 +77,7 @@ SKELETON_MAP = {
     "RightArm": {
         "axes": ["x", "y", "z"],
         "range": {"x": [-80, 80], "y": [-90, 90], "z": [-180, 90]},
-        "note": "Upper arm (mirror). x: fwd(+)/back(−). y: twist. z: raise overhead(−)/lower to side(+). +90z = arm hanging at side. Combine with shoulder, forearm, hand, spine, and hips for reaching and expressive human gestures."
+        "note": "Upper arm (mirror). x: twist/roll along the bone. y: swing fwd(+)/back(−). z: raise overhead(−)/lower to side(+). +90z = arm hanging at side. Combine with shoulder, forearm, hand, spine, and hips for reaching and expressive human gestures."
     },
     "RightForeArm": {
         "axes": ["x", "y"],
@@ -136,7 +138,7 @@ The map is internally mirror-consistent: `LeftForeArm.y` `[-145, 0]` against `Ri
 
 ## Clip-Authoring Conventions
 
-Settle these **before** authoring clips, not after — there are eleven of them and they must all agree.
+All settled during Phase 4 and implemented in `frontend/src/renderer/`. Fourteen clips per fighter, and they must all agree.
 
 ### The neutral pose is a boxing stance, not the T-pose
 
@@ -157,22 +159,38 @@ Non-negotiable, and the reason is the clip queue. Ticks can resolve faster than 
 | Attack clip length | ~0.5 s (15 frames) |
 | Defense clip length | ~0.4 s (12 frames) |
 | Idle / stance loop | ~1.5 s (45 frames), seamless loop |
-| Hit-react, riposte | ~0.4 s (12 frames) |
+| Hit-react, riposte, void | ~0.4 s (12–16 frames) |
+| Exhausted | ~1.5 s (45 frames) |
 | KO | ~1.5 s (45 frames), ends on the floor — the only clip exempt from returning to `STANCE`, since it is terminal |
+
+### Root motion: `_root` and `_rootRot`
+
+The map defines rotations only, and two things cannot be authored without translation. `ko` must end on the floor — an ~88° whole-body rotation plus an ~87 cm pelvis drop, which as a `Hips` rotation would blow through the documented ±35° even though nothing deforms. And **every crouch** (`block_low`, `block_high`, both dodges): bending the knees in pure FK *lifts the feet*, it does not lower the hips, so a crouch without translation walks the fighter into the air.
+
+Two renderer-level keys, explicitly not joints, cover this: **`_root`** (Hips translation in rig units, fighter-local) and **`_rootRot`** (whole-body rotation pre-multiplied onto the Hips). `_root.y` is normally *solved*, not authored — `clipFactory` grounds each keyframe so the lowest toe stays on the canvas. `ko` opts out with `"ground": false` and authors its own fall.
 
 ### Action-to-clip binding
 
-Clip name **is** the action name from [`arena_spec.md`](arena_spec.md) §2 — `jab`, `cross`, `hook`, `block_high`, `block_low`, `dodge_left`, `dodge_right`, `idle`. The renderer looks clips up by the action string in `tick_result.moves` with no mapping table, so a rules-table rename is also a clip rename.
+Clip name **is** the action name from [`arena_spec.md`](arena_spec.md) §2 — `jab`, `cross`, `hook`, `block_high`, `block_low`, `dodge_left`, `dodge_right`, `idle`. The renderer looks clips up by the action string with no mapping table, so a rules-table rename is also a clip rename.
 
-Three additional clips are event-driven rather than action-driven, played in response to [`arena_spec.md`](arena_spec.md) §4.5 events: `hit_react` (on a `hit` event against this fighter), `riposte` (on a `dodged` event where this fighter is the defender), and `ko` (on a `ko` event).
+The other six are named after **events and states, not actions**, and the renderer reaches them from `tick.events` rather than `tick.moves`. This is what lets the eight action clips keep their 1:1 naming rule:
 
-**Eleven clips per fighter.** `agent_b` is `agent_a` mirrored across X, so authoring is eleven clips total, not twenty-two.
+| Clip | Played when |
+|---|---|
+| `stance` | The clip queue is empty — a seamless loop, the visual origin every other clip returns to |
+| `hit_react` | A `hit` event lands on this fighter |
+| `riposte` | A `dodged` event where this fighter is the defender |
+| `ko` | A `ko` event. Terminal, and the only clip exempt from returning to `STANCE` |
+| `exhausted` | An `exhausted` event (spec §3) for this fighter — played *instead of* `idle` |
+| `void` | A `void` event (spec §4.6) for this fighter — played *instead of* the submitted action's clip |
+
+**Fourteen clips per fighter.** `agent_b` is `agent_a` mirrored across X, so that is fourteen to author, not twenty-eight.
+
+Two of those exist because the renderer must never show what the agent *chose* when the platform did something else with it:
+
+- **`idle` is distinct from `stance`**, at the cost of one clip. `idle` is a choice with a cost and a payoff — +20 stamina, zero defense. If it looked like standing still, the most legible piece of strategy in the game (a fighter deciding to recover rather than fight) would be invisible, and the stamina bar would move for no reason a spectator could see.
+- **`exhausted` and `void` are the two outcomes where the chosen action and what happened differ.** Rendering either as its own action clip would lie: a voided jab that plays a jab reads as a miss or a block, not as the cap firing. `exhausted` slumps; `void` loads the lead hand, jams it a third of the way out, and drops back to guard — an aborted wind-up, visibly not a punch.
 
 ### Directional clips are named from the fighter's own perspective
 
 `dodge_left` moves the fighter to *its* left, which is screen-right for the mirrored corner. Author once for `agent_a` and let the mirror handle `agent_b`; do not author a second set.
-
-### Open
-
-- Whether `idle` (the stamina-regen action) reuses the stance loop or gets a distinct "catch your breath" clip. Distinct reads better and costs one clip — decide at authoring time.
-- Whether `exhausted` (spec §3) warrants a visual tell. It is currently rendered as `idle`; a slumped variant would make the stamina economy legible to spectators, which is worth something for a platform meant to be watched.

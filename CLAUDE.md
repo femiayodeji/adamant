@@ -16,18 +16,19 @@ A venv lives at `.venv`. Install with `.venv/bin/pip install -e ".[dev]"`.
 | Balance round-robin, headless | `.venv/bin/python -m server.engine.simulate` |
 | Run the server | `.venv/bin/uvicorn server.main:app --reload` |
 | Frontend | `cd frontend && npm run build` (output `frontend/out/`, served by FastAPI) |
+| Clip library validation, no browser | `cd frontend && npm run poses` |
 | Reference agent | `.venv/bin/python agents/reference_agent.py --code RUMBLE-4F2 --url ws://localhost:8000` |
 | …as a chosen persona | add `--persona aggressor \| counter_puncher \| economist \| pattern_reader` |
 | Run in Docker | `docker compose up -d --build` → <http://localhost:8000> |
 | Stop Docker | `docker compose down` (keeps match logs) — `-v` also **deletes them** |
 
-Deployment detail, including Render, is in [`docs/deploy.md`](docs/deploy.md). Two constraints there are not tuneable: **one worker, one instance** (the registry is in-memory and tick loops are asyncio tasks in-process), and **`/data/logs` must be a persistent volume** (it is both the evaluation dataset and the crash-recovery substrate).
-
 Two bare invocations of the reference agent against the **same match code** deliberately pick *different* personas, so filling both corners by hand gives a real fight rather than a mirror match. `--persona` pins one; `--name` and `--model` still override. The persona is part of `prompt_version` (`ref-v2+aggressor-v1`) so two personas can never aggregate into one row.
 
 `ARENA_LOG_DIR`, `ARENA_CORS_ORIGINS`, and `ARENA_LOG_LEVEL` configure the server. `.env` holds `OPENROUTER_API_KEY` (gitignored) — it serves the evaluation harness, not the reference agent, which uses `ANTHROPIC_API_KEY`.
 
-**Phases 1–3 and 5 are built and gated; see the Build Status table in `docs/plan.md` for what is verified and what is not.** The gates that remain open all need something no test can supply: real model runs (3.5, 5) and a deployed host (6).
+Deployment detail, including Render, is in [`docs/deploy.md`](docs/deploy.md). Two constraints there are not tuneable: **one worker, one instance** (the registry is in-memory and tick loops are asyncio tasks in-process), and **`/data/logs` must be a persistent volume** (it is both the evaluation dataset and the crash-recovery substrate).
+
+**All six phases are implemented. Three gates remain open**, and each needs something no test can supply: real model runs (Phase 3.5 and the Phase 5 evaluation) and a deployed host (Phase 6). See the Build Status table in `docs/plan.md`.
 
 ## Never spend API budget without asking
 
@@ -42,10 +43,12 @@ The unit of evaluation is the **agent** (prompt + model + logic as a bundle), no
 ## Document hierarchy
 
 - **`docs/agent_guide.md` — the front door for agent builders.** The 5-minute path, the rules explained rather than specified, the protocol with real captured payloads, writing an agent in any language, and testing free against the bot ladder. Point friends here; point *implementers* at the spec. It explains and links — it never restates a number that could drift.
-- **`docs/arena_spec.md` (v0.6) — the contract.** Protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, frontend views. Friends will build agents against this spec, not against the code. If implementation must deviate, **update the spec in the same commit**.
-- **`docs/plan.md` (v3)** — how to build it: principles, tech stack, six gated phases, evaluation design, explicit non-goals.
-- **`docs/review.md`** — the decision log. Findings are already applied to the other docs; this file records *why*, with a traceability table mapping each finding to where it landed. Read it before re-litigating a design choice — most obvious objections were raised and answered here on 2026-08-06.
-- **`docs/skeleton.md`** — rig joint map and clip-authoring conventions. Consumed only by the Phase 4 renderer; orthogonal to rules and protocol.
+- **`docs/arena_spec.md` (v0.6) — the contract.** Protocol, action space, damage/stamina values, resolution rules, message schemas, REST API, frontend views. Friends will build agents against this spec, not against the code. If implementation must deviate, **update the spec in the same commit.** §13 is the live list of settled-vs-open tuning decisions — read it before re-litigating one.
+- **`docs/plan.md` (v4)** — what is *not* finished: the three open gates, and the evaluation conventions that make results comparable. Completed build instructions have been removed; the code and the spec are the record.
+- **`docs/skeleton.md`** — rig joint map and clip-authoring conventions, including the fourteen-clip roster. Consumed only by the renderer; orthogonal to rules and protocol.
+- **`agents/SPEC_NOTES.md`, `frontend/SPEC_NOTES.md`** — gaps found building against the spec that are **still open**. Anything since written into the spec has been deleted from them; the spec is the record.
+
+Docs describe the system as it is now. When something is implemented and its rationale lives here or in the spec, delete the plan that described it rather than leaving a second account to drift.
 
 ## Architecture invariants
 
@@ -67,12 +70,13 @@ These are load-bearing across multiple documents; violating one breaks something
 
 **REST `{ref}` accepts match_id *or* match_code.** Spectators hold only a code; keying read endpoints by ID alone makes Replay impossible for them.
 
+**Clip name IS the action name.** The eight action clips map 1:1 to the eight action names with no mapping table, so a rules-table rename is a clip rename. The other six (`stance`, `hit_react`, `riposte`, `ko`, `exhausted`, `void`) are named after events and states and are reached from `tick.events`, never from `tick.moves` — which is what keeps that 1:1 rule intact. A renderer must check events before animating: a voided action must never play its strike clip.
+
 ## Working rules
 
-- **Terminal before Three.js.** Bots must complete full matches (server + two bot clients) before any renderer work starts. Phase 3.5 (a throwaway LLM agent) exists specifically to catch rules-table changes *before* eleven animation clips are authored against those action names — clip name **is** the action name, with no mapping table.
-- **Phases are gated.** Do not start a phase until the previous gate passes. Gates are written into `docs/plan.md` and are specific — e.g. Phase 1 requires table-invariant tests, including a **no-strictly-dominated-action** check (a coverage-only check misses the `dodge_right` bug that motivated riposte).
-- **Out of scope, do not build:** accounts/auth beyond the three tokens, ELO/rankings, tournaments, matchmaking, agent hosting, ruleset selector, randomness/crits, database, replay library, horizontal scaling, leaderboards. The *log schema* that would feed an analysis layer is in scope from Phase 2; the analysis layer is not.
-- **Settled vs. open tuning** is tracked in spec §13. The Phase 3 balance check has run and been re-run under the cap: always-`jab` is not dominant, so that trigger did not fire, and riposte stays at 5. Two things stay open — whether aggression dominates *once mixed strategies are in play* (`mostly-hook` is joint first, which is not dominance; if it ever is, reduce trade damage to 50% **and change nothing else**), and whether the repetition cap shifts the mixed-strategy equilibrium, which has only been checked against the bot ladder.
+- **Phases are gated.** Do not start a phase until the previous gate passes. Phase 3.5 (a throwaway LLM agent) exists specifically to catch rules-table changes *before* clips are authored against those action names.
+- **Out of scope, do not build:** accounts/auth beyond the three tokens, ELO/rankings, tournaments, matchmaking, agent hosting, ruleset selector, randomness/crits, database, replay library, horizontal scaling, leaderboards. The *log schema* that would feed an analysis layer is in scope; the analysis layer is not.
+- **The published balance figures are load-bearing tests**, not documentation. `test_balance.py` asserts the 0–0 Jab-bot draw (against `mostly-block_high`), the KO of a *literal* always-`block_high` at tick 30, the tick-28 hook-every-4th KO, and the tick-26 `dodge_right` KO; `test_server.py` re-asserts the tick-28 figure over real sockets. Re-derive them with `python -m server.engine.simulate` — never hand-edit. A rules change that moves them should move the spec too, deliberately.
 - **Built-in bots are repeat-aware and must stay that way.** A bot that voided out would stop probing what it exists to probe. `test_balance.py::test_no_bot_in_the_ladder_ever_voids_a_move` guards this. `ConstantBot` in the round-robin is the deliberate exception — its voiding *is* the measurement.
-- **The published balance figures are load-bearing tests**, not documentation. `test_balance.py` asserts the 0–0 Jab-bot draw (now against `mostly-block_high`), the KO of a *literal* always-`block_high` at tick 30, the tick-28 hook-every-4th KO, and the tick-26 `dodge_right` KO; `test_server.py` re-asserts the tick-28 figure over real sockets. Re-derive them with `python -m server.engine.simulate` — never hand-edit. A rules change that moves them should move the spec too, deliberately.
-- `/doc-review` (`.claude/commands/doc-review.md`) reviews the docs and writes results to `docs/review.md`.
+- **`frontend/src/lib/demo.ts` is the one duplicate of server logic** in the repo — a hand-copy of the resolution rules backing `?demo=1`. It can drift silently. Change it with `server/engine/rules.py` or delete it.
+- `/doc-review` (`.claude/commands/doc-review.md`) reviews the docs and writes results to `docs/doc_review.md`.

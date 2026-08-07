@@ -113,10 +113,6 @@ def initial_state() -> MatchState:
     return MatchState()
 
 
-def opponent_of(corner: Corner) -> Corner:
-    return "agent_b" if corner == "agent_a" else "agent_a"
-
-
 @dataclass(frozen=True)
 class _Normalised:
     """One fighter's move after steps 1–3 of spec §4.1.

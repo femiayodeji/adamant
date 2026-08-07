@@ -272,7 +272,3 @@ export function buildClipSet(rig: Rig, mirrored: boolean): ClipSet {
   }
   return set;
 }
-
-export function clipMeta(name: string): ClipDef | undefined {
-  return LIBRARY.clips[name];
-}

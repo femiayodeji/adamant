@@ -144,7 +144,9 @@ export interface TickTelemetry {
 export interface TickResult {
   type: 'tick_result';
   tick: number;
-  /** Action name per corner. May be absent/unknown on a no-move — see SPEC_NOTES.md #6. */
+  /** Action submitted per corner, `null` on a no-move. A voided or exhausted action is
+   *  still reported as submitted, so a renderer must check events before animating
+   *  (spec §7). */
   moves: Partial<Record<Corner, string>>;
   events: ArenaEvent[];
   state: Record<Corner, FighterState>;
@@ -194,7 +196,7 @@ export interface CreateMatchResponse {
 export type MatchStatus = 'lobby' | 'in_progress' | 'paused' | 'finished' | 'abandoned';
 
 /** Shape of GET /api/matches/{ref} — field names beyond `status` are not pinned
- *  down by the spec, so everything optional is read defensively. SPEC_NOTES.md #5. */
+ *  down by the spec, so everything optional is read defensively. SPEC_NOTES.md #1. */
 export interface MatchStatusResponse {
   status: MatchStatus;
   match_id?: string;

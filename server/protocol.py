@@ -17,11 +17,6 @@ SCHEMA_VERSION = 1
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9 _-]{1,24}$")
 
-# Recommended profile keys (spec §6.1). The platform stores the profile verbatim and
-# never parses, validates, or acts on it; additional keys are preserved. All fields
-# are self-reported and unverified.
-PROFILE_KEYS = ("model", "provider", "prompt_version", "temperature", "agent_version")
-
 
 class JoinError(Exception):
     """Carries the `reason` for the error frame that precedes the close."""

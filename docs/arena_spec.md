@@ -6,15 +6,6 @@ A hosted platform where two LLM agents fight under boxing-style rules. The platf
 
 **What this platform measures:** the **agent** — the bundle of prompt + model + logic — reasoning about combat. Not inference speed. See §12 for how the deadline interacts with that goal.
 
-> **Changes in v0.6** — one new combat rule and the wire changes it forces.
-> A fighter may now submit the same action at most **three times consecutively**; the fourth and every further consecutive repeat is **void** (new §4.6, with a `void` event in §4.5 and a row in §4.2/§5). Fighter state gains **`last_action`** and **`repeat_streak`** (§3), which appear everywhere fighter state appears — `state_update.self`/`.opponent`, `tick_result.state`, and `match_end.final_state` — so that an agent can see the cap coming without keeping local state, preserving §1's stateless-by-design promise. The order of operations in §4.1 gains the repeat check, placed **ahead of the affordability check**. Built-in bots are now repeat-aware (§11), and the published balance figures moved with the rule (§11, §13).
->
-> **Changes in v0.5** (from building Phases 1–3 against v0.4 — every item is a gap the implementation hit, and the spec is the contract, so it moves in the same commit):
-> `join` gains an optional **`corner`** preference (§6.1), without which corner swapping is not reproducible and the lobby cannot fill a *chosen* corner; a rejected submission is now explicitly **retryable within the deadline** and `duplicate` is documented as never becoming a no-move cause (§4.4); **event ordering** is defined (§4.5); `tick_result.moves` is defined for **no-moves and exhausted actions** (§7); a successful `resume` now **re-sends `match_start`** so a restarted agent learns its deadline budget (§6.4); and §8.2's status codes are given a **precedence order**.
->
-> **Changes in v0.4** (from the 2026-08-06 documentation review, `docs/review.md`):
-> agent profiles are now required at join (§6.1); a missing move is **penalised** rather than converted to `idle` (§4, §5); matches are **pausable and resumable** across infrastructure failure (§6.4); the TKO rule is **removed**; successful dodges now **riposte** for chip damage, which fixes `dodge_right` being a strictly dominated action (§2); tick numbering, `final_state`, draw semantics, and the `history` event encoding are now defined; `max_ticks` and `deadline_ms` are settable per match (§8).
-
 ---
 
 ## 1. Core Concepts
@@ -73,7 +64,7 @@ Eight actions. Every `move` message must contain exactly one.
 
 This is the economic difference between blocks and dodges. Blocks are cheap and safe; dodges cost more, and are only worth it when you read the attack correctly — the payoff for prediction, which is the skill this platform measures.
 
-> **Why riposte exists.** Without it, `dodge_right` is strictly dominated: `block_high` counters everything `dodge_right` counters *plus* `cross`, at less than half the stamina. A rational agent would never pick it, silently reducing an eight-action space to seven. Simulation of the v0.3 table confirms this (a `dodge_right` bot loses to Jab-bot on points; with riposte it KOs Jab-bot). See §11 for the balance status of the number itself.
+> **Why riposte exists.** Without it, `dodge_right` is strictly dominated: `block_high` counters everything `dodge_right` counters *plus* `cross`, at less than half the stamina. A rational agent would never pick it, silently reducing an eight-action space to seven. Simulation confirms both halves: at riposte 0 a `dodge_right` bot loses to Jab-bot on points; at 5 it KOs Jab-bot. See §13 for the balance status of the number itself.
 
 ### Other
 
@@ -257,7 +248,7 @@ Spam is punished **economically, not punitively**: a void is a legal action subm
 | Disconnect | Match **pauses** and awaits resume (§6.4) — it is not a loss |
 | Resume window exceeded | Match ends `abandoned` (§5.1) |
 
-There is **no TKO rule.** It was removed in v0.4 as redundant: an agent that stops deciding is already defenseless and accruing penalties, so it loses on damage or on the decision score without a special case. Removing it also stops network failures from being recorded as combat losses.
+There is **no TKO rule**, deliberately. An agent that stops deciding is already defenseless and accruing penalties, so it loses on damage or on the decision score without a special case — and its absence is what stops a network failure from being recorded as a combat loss.
 
 ### 5.1 End reasons
 
@@ -599,7 +590,7 @@ Animation clips are driven by the rig described in [`skeleton.md`](skeleton.md),
 
 ## 10. What Agent Builders Receive
 
-The public "build an agent" doc is just three things:
+[`agent_guide.md`](agent_guide.md) is the front door for agent builders — it explains what this section specifies, with captured payloads and runnable examples. What a builder needs from *this* document is three things:
 
 1. The action table and resolution matrix (§2–§4)
 2. The agent WebSocket protocol (§6)
@@ -625,7 +616,7 @@ Usage: `python agent.py --code RUMBLE-4F2 --url wss://arena.example.com`
 
 Use the first of `block_high`, `block_low` that would not void, read off `self.last_action` and `self.repeat_streak` in the `state_update`. This needs no model call and no local state, and it provably never voids — a fighter has only one `last_action`, so both cannot be capped at once. Both cost 3 stamina, below the +5 passive regen, so an unbounded run of hedges cannot exhaust the fighter either. The steady state is `block_high ×3, block_low, block_high ×3, …`.
 
-Note what the fallback is and is not, under v0.4 rules. Sending a hedge is **strictly better than sending nothing** — a no-move is defenseless and costs 15 penalty points (§4.4), so hedging is a legitimate strategic choice, not a loophole. But a hedge is a real move with real consequences, and it is no longer a way to be scored as a deliberate defensive strategist. Set `telemetry.fallback = true` when it happens; a high fallback rate is the signal that a model is running out of clock rather than choosing to block.
+Note what the fallback is and is not. Sending a hedge is **strictly better than sending nothing** — a no-move is defenseless and costs 15 penalty points (§4.4), so hedging is a legitimate strategic choice, not a loophole. But a hedge is a real move with real consequences, and it is not a way to be scored as a deliberate defensive strategist. Set `telemetry.fallback = true` when it happens; a high fallback rate is the signal that a model is running out of clock rather than choosing to block.
 
 ---
 
@@ -647,7 +638,7 @@ The ladder, not model-vs-model play, is the measuring instrument. This game is a
 
 **Jab-bot is a designed trap.** The obvious answer — meeting every `jab` with `block_high` — takes zero damage but also deals zero, and both fighters finish at 100 HP and 0 points: a **draw**. Winning requires noticing that `hook` into an incoming `jab` is a trade (§4.2), dealing 15 and taking 5 for a net +10 per exchange; hooking every fourth tick and blocking otherwise KOs Jab-bot at tick 28. Any gate against Jab-bot should therefore measure **the outcome, not the defensive-action share** — rewarding defensiveness rewards the drawing line.
 
-The repetition cap sharpened the trap rather than dissolving it. A *literal* always-`block_high` now voids from its own fourth tick onward and is knocked out at tick 30 — the naive answer went from drawing to losing. The drawing line survives, but only for an agent that blocks the jabs *and* varies enough to stay legal, which is a strictly harder thing to find.
+The repetition cap sharpens the trap rather than dissolving it: a *literal* always-`block_high` voids from its own fourth tick onward and is knocked out at tick 30. The drawing line still exists, but only for an agent that blocks the jabs *and* varies enough to stay legal — a strictly harder thing to find than the naive answer, which now loses outright.
 
 ---
 
@@ -678,8 +669,6 @@ Settled, recorded here so they are not re-litigated at build time:
 - **No-move penalty = 15.** Chosen to equal `hook` damage, the largest single hit in the game, so that no-move is worse than any real move in every branch — including throwing a `hook` that gets countered. A materially smaller penalty would make silence a viable hedge when an agent is unsure.
 - **A void is punished economically, not with a penalty (§4.6).** Adding a penalty was considered and rejected: it would fold "this agent spams" into the same number as "this agent goes silent", and those are different findings about an agent. Forfeiting the tick and paying the stamina is already strictly worse than any legal alternative, since any non-repeated action costs the same or less and actually resolves.
 
-Settled by the v0.6 rules change, recorded here for the same reason:
-
 - **Repetition cap = 3.** Two would force a change every other tick, which is less a strategic constraint than a metronome, and would break `cycle-3` — a pattern bot the ladder needs. Four or more is barely a constraint at all inside a 10-tick history window. Three leaves room for a deliberate two- or three-punch combination while guaranteeing that at minimum every fourth tick is a real decision.
 - **The streak counts submissions, and a void extends it.** The alternative — resetting the streak on a void — makes the cap self-clearing: an agent could throw the same action forever, losing only every fourth tick. That is a rate limit, not a cap, and it does not force the variety the rule exists to force.
 
@@ -688,5 +677,5 @@ Genuinely open, to be resolved by the balance gate in Phase 3:
 - **Riposte damage (currently 5).** Simulation shows 0 leaves `dodge_right` strictly dominated (a dead action), 3 makes it marginal against Jab-bot (KO at tick 35, near the stamina limit), and 5 makes it decisive (KO at tick 20). 5 is provisional. Alternatives to riposte, if it proves too strong: give dodges a lower stamina cost, or grant a next-tick damage bonus instead of immediate chip damage — the latter costs `resolve()` its purity and should be a last resort.
 - **Stamina regen numbers.** Untested. Tune after the built-in-bot phase — always-jab must not be dominant.
 - **Aggression balance.** Round-robin simulation currently ranks `mostly-hook` joint first, level with `frequency` and `cycle-5`, and ahead of `mixer`. This is expected — pure defenses cannot win without riposte — but joint-first is not dominance, so the trigger for halving trade damage has still not fired. It needs re-checking against mixed strategies once real agents play.
-- **Whether the cap changes the equilibrium.** The repetition cap (§4.6) is new in v0.6 and has been checked only against the bot ladder, where it behaves as intended: no ladder bot voids, one-note strategies collapse, and the published figures moved in the expected direction. Whether it shifts the mixed-strategy equilibrium — a near-equilibrium mixer repeats by chance roughly once every few hundred ticks, so it should not — is unverified against real agents.
+- **Whether the cap changes the equilibrium.** The repetition cap (§4.6) has been checked only against the bot ladder, where it behaves as intended: no ladder bot voids and one-note strategies collapse. Whether it shifts the mixed-strategy equilibrium — a near-equilibrium mixer repeats by chance roughly once every few hundred ticks, so it should not — is unverified against real agents.
 - **History window (10 ticks).** See §6.2. Defensible as an MVP default; revisit once the `cycle` and `frequency` bots exist, since the window bounds what either can teach.

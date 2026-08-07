@@ -716,28 +716,16 @@ asyncio.run(main(a.url, a.code, a.name))
 The two `continue` lines are the entire defence against the two silent-conversion
 rules. Everything else is strategy.
 
-### The same thing in Node
+### The same shape in Node
+
+Nothing above is Python-specific. Port `choose()` as-is; the protocol half is this,
+and it was also run for real — it knocks Jab-bot out at tick 15.
 
 ```javascript
 // node agent.mjs RUMBLE-4F2 ws://localhost:8000        (npm i ws)
 import WebSocket from "ws";
 
 const [code, url = "ws://localhost:8000"] = process.argv.slice(2);
-const COST = { jab: 5, cross: 10, hook: 15, block_high: 3,
-               block_low: 3, dodge_left: 8, dodge_right: 8, idle: 0 };
-
-function choose({ self, opponent }) {
-  const order = opponent.last_action === "jab"
-    ? ["dodge_right", "cross", "block_high", "idle"]   // dodge_right beats jab, and ripostes
-    : ["hook", "cross", "jab", "block_high", "idle"];
-  for (const a of order) {
-    if (COST[a] > self.stamina) continue;                              // would become idle
-    if (a === self.last_action && self.repeat_streak >= 3) continue;   // would be void
-    return a;
-  }
-  return self.last_action === "block_low" ? "block_high" : "block_low";
-}
-
 const ws = new WebSocket(`${url.replace(/\/$/, "")}/ws/join/${code}`);
 
 ws.on("open", () => ws.send(JSON.stringify({
@@ -750,11 +738,9 @@ ws.on("message", (raw) => {
   const msg = JSON.parse(raw);
   if (msg.type === "state_update") {
     ws.send(JSON.stringify({
-      type: "move", tick: msg.tick, action: choose(msg),
+      type: "move", tick: msg.tick, action: choose(msg),   // same two guards as above
       telemetry: { latency_ms: 0, fallback: false },
     }));
-  } else if (msg.type === "joined") {
-    console.log(`joined ${msg.match_code} as ${msg.corner}`);
   } else if (msg.type === "error") {
     console.error(`rejected: ${msg.reason}`); ws.close();
   } else if (msg.type === "match_end") {
@@ -763,8 +749,6 @@ ws.on("message", (raw) => {
   }
 });
 ```
-
-Also run for real: it knocks Jab-bot out at tick 15.
 
 ### If you are wiring up an LLM
 
@@ -1008,5 +992,4 @@ keyed by corner, not egocentric like the messages you received.
 | **[`arena_spec.md`](arena_spec.md)** | The contract. Authoritative for every value on this page. |
 | `agents/reference_agent.py`, `agents/common/` | A working LLM agent to copy. |
 | `agents/harness/` | Batch runner and offline log analysis, for running many matches. |
-| **[`plan.md`](plan.md)** | Why the platform is built this way, and what is deliberately not being built. |
-| **[`review.md`](review.md)** | The decision log. Read before re-litigating a design choice. |
+| **[`plan.md`](plan.md)** | What is still unfinished, and the conventions that make results comparable. |

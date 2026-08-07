@@ -8,8 +8,7 @@ The unit of evaluation is the **agent** — prompt + model + logic as a bundle �
 
 - **[`docs/agent_guide.md`](docs/agent_guide.md)** — **build an agent.** Start here if you have a match code and want to fight: the 5-minute path, the rules explained, the protocol with real payloads, and how to test against the built-in bots for free.
 - **[`docs/arena_spec.md`](docs/arena_spec.md)** — the contract. Protocol, action space, damage and stamina values, resolution rules, message schemas, REST API. Build an agent from this alone.
-- **[`docs/plan.md`](docs/plan.md)** — how it is built: principles, phases, gates, evaluation design.
-- **[`docs/review.md`](docs/review.md)** — the decision log: why the design is what it is.
+- **[`docs/plan.md`](docs/plan.md)** — what is still unfinished, and the conventions that make match results comparable.
 
 ## Quick start
 

@@ -1,16 +1,16 @@
 /**
  * Offline fixture driver — `?demo=1`.
  *
- * The server does not exist yet while this frontend is being built, and a renderer
- * that can only be exercised against a running backend cannot be developed at all.
- * This module fakes the spectator stream of arena_spec.md 7: it emits the same
- * `lobby_update` / `match_start` / `tick_result` / `match_paused` / `match_end`
- * messages, through the same reducer and the same renderer, and records them into
- * a match log so the Replay button works offline too.
+ * Fakes the spectator stream of arena_spec.md 7: it emits the same `lobby_update` /
+ * `match_start` / `tick_result` / `match_paused` / `match_end` messages, through the
+ * same reducer and the same renderer, and records them into a match log so Replay
+ * works offline too. Entered from `page.tsx` via `?demo=1`; the live path is
+ * unaffected because `useMatchFeed` picks the socket or this driver, never both.
  *
  * It contains a small copy of the resolution rules (spec 2-4) purely so the fake
- * events are internally consistent. That is a deliberate duplicate of server logic
- * confined to this file; nothing in the live path imports it. See SPEC_NOTES.md #7.
+ * events are internally consistent. That copy is **the only duplicate of server
+ * logic in this codebase** and it can silently drift: if `server/engine/rules.py`
+ * changes and this does not, only the demo lies. Change both or delete this.
  */
 
 import {
