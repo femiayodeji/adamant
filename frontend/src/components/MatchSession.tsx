@@ -53,7 +53,7 @@ export function MatchSession({ code, demo, onExit, onOpen }: Props) {
       <div className="topbar">
         <span className="brand">
           <Mark />
-          ADA<b>MANT</b>
+          Adamant
         </span>
         <span className="chip mono">{code}</span>
         <ConnectionChip connection={view.connection} />

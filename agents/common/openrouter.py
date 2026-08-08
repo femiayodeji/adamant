@@ -41,12 +41,31 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_TITLE = "Adamant"
 
 
+#: HTTP statuses that will fail identically on every retry: the key is wrong, the
+#: account cannot pay, or the model is not permitted to it. Everything else — 429
+#: from a busy free-tier provider, a 5xx, a timeout — is worth trying again next
+#: tick. The distinction is the difference between a corner that hedges through a
+#: blip and a corner that hedges through all 60 ticks of a match nobody can win.
+PERMANENT_STATUSES: frozenset[int] = frozenset({401, 402, 403})
+
+
 class OpenRouterError(RuntimeError):
     """The call reached OpenRouter and came back unusable.
 
-    Never fatal to a match: ``decision.decide`` catches everything and hedges,
-    so an upstream outage costs the corner a fallback action, not the fight.
+    Not fatal on its own: ``decision.decide`` catches everything and hedges, so a
+    blip or an outage costs the corner a fallback action rather than the fight.
+    ``permanent`` is what lets a caller tell a blip from a wall — retrying a 402
+    fifty-nine more times produces fifty-nine more identical failures and a
+    scoreless draw that looks like the engine never ran.
     """
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def permanent(self) -> bool:
+        return self.status in PERMANENT_STATUSES
 
 
 def load_api_key(env_path: Path | None = None) -> str:
@@ -97,11 +116,43 @@ class OpenRouterClient:
     #: Injectable for tests: an async ``(payload, headers, timeout) -> dict``.
     post: Any = None
 
+    #: Set to the message of the first failure that will never succeed (see
+    #: ``PERMANENT_STATUSES``). ``decision.decide`` catches every exception and
+    #: hedges, by design — its contract is that it always returns an action — so a
+    #: caller that wants to *act* on a dead key cannot see the exception and reads
+    #: this instead.
+    permanent_error: str | None = field(default=None, compare=False)
+
     _http: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.api_key and self.post is None:
             self.api_key = load_api_key()
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}", "X-Title": APP_TITLE}
+
+    async def preflight(self, timeout: float = 20.0) -> None:
+        """Check this model can actually be called. Raises ``OpenRouterError`` if not.
+
+        One request for a single token — the smallest thing OpenRouter will answer.
+        A key that cannot pay for this model fails here for nothing, which is the
+        entire point: the alternative is discovering it 120 model calls into a match
+        that both corners spent hedging, and a scoreless draw that reads as a broken
+        engine rather than a declined card.
+        """
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+        post = self.post or self._default_post
+        try:
+            await post(payload, self._headers(), timeout)
+        except OpenRouterError as exc:
+            if exc.permanent:
+                self.permanent_error = str(exc)
+            raise
 
     async def _default_post(self, payload: dict, headers: dict, timeout: float) -> dict:
         if self._http is None:
@@ -110,7 +161,9 @@ class OpenRouterClient:
             self._http = httpx.AsyncClient(timeout=timeout)
         response = await self._http.post(API_URL, json=payload, headers=headers, timeout=timeout)
         if response.status_code >= 400:
-            raise OpenRouterError(f"HTTP {response.status_code}: {response.text[:200]}")
+            raise OpenRouterError(
+                f"HTTP {response.status_code}: {response.text[:200]}", response.status_code
+            )
         return response.json()
 
     async def __call__(self, system: str, user: str, deadline_ms: int):
@@ -127,9 +180,13 @@ class OpenRouterClient:
         if self.reasoning is not None:
             payload["reasoning"] = self.reasoning
 
-        headers = {"Authorization": f"Bearer {self.api_key}", "X-Title": APP_TITLE}
         post = self.post or self._default_post
-        data = await post(payload, headers, budget_seconds(deadline_ms))
+        try:
+            data = await post(payload, self._headers(), budget_seconds(deadline_ms))
+        except OpenRouterError as exc:
+            if exc.permanent and self.permanent_error is None:
+                self.permanent_error = str(exc)
+            raise
 
         # An upstream provider failure arrives as HTTP 200 with an `error` object
         # and no choices, so a naive `data["choices"][0]` would raise KeyError and

@@ -36,6 +36,26 @@ UNAVAILABLE_NO_PACKAGE = "the agents package is not installed beside the server"
 UNAVAILABLE_NO_KEY = "OPENROUTER_API_KEY is not configured on the server"
 
 
+class ModelUnreachable(RuntimeError):
+    """The roster fighter's model could not be called, so the corner was not taken.
+
+    Carries the provider's own message: "insufficient credits" and "invalid key" need
+    different actions from the host, and only the provider knows which it is.
+    """
+
+
+async def preflight(model_client: Any) -> None:
+    """Confirm a model client can reach its model. Raises with the provider's reason.
+
+    Skipped for a client without a `preflight` method, which is how the test suite's
+    stubs stay two lines long.
+    """
+    probe = getattr(model_client, "preflight", None)
+    if probe is None:
+        return
+    await probe()
+
+
 def _roster_module():
     """The fighter roster, or None if `agents` is not importable."""
     try:
@@ -59,6 +79,12 @@ def roster() -> list[dict[str, Any]]:
     *would* be available and say what is missing."""
     module = _roster_module()
     return module.describe() if module else []
+
+
+def min_deadline_ms() -> int:
+    """The shortest `deadline_ms` the roster can answer inside, or 0 if unknown."""
+    module = _roster_module()
+    return int(getattr(module, "MIN_DEADLINE_MS", 0) or 0) if module else 0
 
 
 def availability() -> tuple[bool, Optional[str]]:
@@ -118,6 +144,18 @@ class LLMAgentClient(CornerClient):
         )
         return decision.action, decision.telemetry()
 
+    def unrecoverable(self) -> Optional[str]:
+        """Why this corner can never decide again, if that has happened.
+
+        A bad key or an unpayable account fails the same way on every remaining
+        tick. Hedging through all of them yields a full match of `block_high`
+        against `block_high` — no damage, no events, a 0–0 draw, and a log whose
+        `match_start` names a model that never answered once. Better to drop the
+        corner and let the match pause on it (spec §6.4), which is what an
+        infrastructure failure is supposed to look like.
+        """
+        return getattr(self.model_client, "permanent_error", None)
+
     async def aclose(self) -> None:
         await self.model_client.aclose()
 
@@ -141,6 +179,17 @@ async def spawn(
 
     fighter = module.get_fighter(agent)  # ValueError on an unknown key
     client = LLMAgentClient(url=url, code=code, fighter=fighter, model=model, corner=corner)
+
+    # Check the model answers *before* taking the corner. `availability()` can only
+    # see whether a key is configured, and a key that is present but cannot pay looks
+    # identical to a working one until the first tick — at which point the corner is
+    # already filled, the host has started the fight, and every tick hedges.
+    try:
+        await preflight(client.model_client)
+    except Exception as exc:
+        await client.aclose()
+        raise ModelUnreachable(str(exc)) from exc
+
     taken = await client.handshake()
     launch(client, name=f"llm-{agent}-{code}")
     return taken

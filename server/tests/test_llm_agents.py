@@ -16,11 +16,17 @@ import json
 
 import pytest
 
+from agents.openrouter_app import roster
 from server import llm_agents
 
 from .conftest import Agent, Spectator
 
-FAST = {"deadline_ms": 500, "max_ticks": 2}
+# The stub answers instantly, so a long deadline costs the suite nothing — a tick
+# resolves as soon as both corners have answered, not when the clock runs out. It has
+# to clear `MIN_DEADLINE_MS` because `fill_agent` now refuses a bracket the roster
+# cannot answer inside, and it is read from the roster rather than copied so that
+# moving the floor does not silently start testing something else.
+FAST = {"deadline_ms": roster.MIN_DEADLINE_MS, "max_ticks": 2}
 
 
 class StubModel:
@@ -105,6 +111,55 @@ async def test_fill_agent_is_503_when_no_key_is_configured(arena, monkeypatch):
     assert "OPENROUTER_API_KEY" in response.json()["detail"]
 
 
+async def test_fill_agent_is_503_when_the_key_cannot_reach_the_model(arena, monkeypatch):
+    """A key that is present but unusable — no credit, revoked, wrong org — has to be
+    refused exactly like a missing one.
+
+    This is the failure that cost a real match. `availability()` can only see whether
+    a key is *configured*, so a declined account filled the corner, the host started
+    the fight, and all 120 model calls came back HTTP 402. Every move was the hedge:
+    block_high against block_high for 60 ticks, no damage, no events, a 0-0 draw, and
+    a log naming two models that never answered once. Nothing about that looks like a
+    billing problem, which is why the corner must not be taken at all.
+    """
+
+    class Declined(StubModel):
+        async def preflight(self) -> None:
+            raise RuntimeError("HTTP 402: Insufficient credits")
+
+    monkeypatch.setattr(llm_agents, "build_model_client", lambda fighter, model=None: Declined())
+    monkeypatch.setattr(llm_agents, "_have_key", lambda: True)
+    created = await arena.create_match(**FAST)
+
+    response = await arena.fill_agent(
+        created["match_code"], created["host_token"], corner="agent_a", agent="bulldozer"
+    )
+
+    assert response.status_code == 503
+    assert "402" in response.json()["detail"]
+    status = (await arena.get(f"/api/matches/{created['match_code']}")).json()
+    assert status["corners"]["agent_a"] is None, "a corner it cannot fight in stays empty"
+
+
+async def test_fill_agent_refuses_a_bracket_the_roster_cannot_answer_inside(arena, stub_model):
+    """The roster runs on free models, which need seconds per decision. Under the
+    floor every tick times out into a hedge — legal, unpenalised, invisible — and the
+    match finishes scoreless. Saying so up front beats discovering it at tick 60."""
+    created = await arena.create_match(deadline_ms=500, max_ticks=2)
+
+    response = await arena.fill_agent(
+        created["match_code"], created["host_token"], corner="agent_a", agent="bulldozer"
+    )
+
+    assert response.status_code == 409
+    assert str(roster.MIN_DEADLINE_MS) in response.json()["detail"]
+
+
+async def test_the_roster_endpoint_publishes_the_deadline_floor(arena, stub_model):
+    payload = (await arena.get("/api/agents")).json()
+    assert payload["min_deadline_ms"] == roster.MIN_DEADLINE_MS
+
+
 # ─── §8.6 validation ───
 
 
@@ -157,7 +212,7 @@ async def test_filled_agent_joins_the_corner_and_publishes_its_profile(arena, st
 
     assert response.status_code == 200
     assert response.json()["corner"] == "agent_b"
-    assert response.json()["model"] == "google/gemini-3.6-flash"
+    assert response.json()["model"] == roster.get_fighter("ricochet").model
 
     corner = (await arena.get(f"/api/matches/{code}")).json()["corners"]["agent_b"]
     assert corner["name"] == "Ricochet"
@@ -254,6 +309,48 @@ async def test_an_unparseable_reply_hedges_instead_of_losing_the_corner(arena, m
     assert first["fallback"] is True
     assert log["ticks"][0]["moves"]["agent_a"] == "block_high"
     assert log["match_end"]["reason"] != "abandoned"
+
+
+async def test_a_permanently_failing_model_drops_its_corner_instead_of_hedging_on(
+    arena, monkeypatch
+):
+    """A transport blip is worth a hedge; a declined account is not.
+
+    The corner answers the tick it is already holding — the hedge is decided and
+    withholding it would only add a no-move penalty — and then stops, so the match
+    pauses on a missing corner (spec §6.4). That is the honest record: infrastructure
+    failure, distinguishable from combat, rather than a full match of hedges logged
+    under a model's name.
+    """
+
+    class Broke(StubModel):
+        permanent_error = "HTTP 402: Insufficient credits"
+
+        async def __call__(self, system, user, deadline_ms):
+            raise RuntimeError(self.permanent_error)
+
+    monkeypatch.setattr(llm_agents, "build_model_client", lambda fighter, model=None: Broke())
+    monkeypatch.setattr(llm_agents, "_have_key", lambda: True)
+
+    created = await arena.create_match(deadline_ms=roster.MIN_DEADLINE_MS, max_ticks=20)
+    code, token = created["match_code"], created["host_token"]
+    match = arena.match(code)
+    match.config.resume_window_ms = 1000  # do not sit out the full two minutes
+    assert (await arena.fill_agent(code, token, corner="agent_a", agent="cipher")).status_code == 200
+    await arena.fill_bot(code, token, corner="agent_b", bot="jab")
+    spectator = await Spectator.connect(arena, code)
+    await arena.start(code, token)
+
+    end = await spectator.expect("match_end", timeout=30)
+
+    assert end["reason"] == "abandoned", "the corner left rather than hedging 20 ticks"
+    assert end["winner"] == "agent_b"
+    log = (await arena.get(f"/api/matches/{code}/log")).json()
+    assert len(log["ticks"]) < 20, "it stopped early instead of running the clock out"
+    assert log["match_end"]["final_state"]["agent_b"]["points"] == 0, (
+        "and no combat was recorded under a model that never answered"
+    )
+    await spectator.close()
 
 
 async def test_a_human_can_take_the_other_corner_against_a_roster_fighter(arena, stub_model):

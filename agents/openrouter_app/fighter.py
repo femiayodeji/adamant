@@ -58,6 +58,13 @@ async def play(
         fighter, model=model, temperature=temperature, api_key=api_key
     )
     try:
+        # Fail here rather than in the ring. Without this a key that cannot pay takes
+        # the corner, the host starts the fight, and every tick hedges — a full match
+        # of blocks, no damage, no events and a 0-0 draw, under a model that never
+        # answered once. `preflight` costs one token when it works and nothing at all
+        # when it does not. Only for a client we built: an injected one is a test stub.
+        if owned:
+            await client.preflight()
         return await run_match(
             url,
             code,

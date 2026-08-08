@@ -32,10 +32,26 @@ APP_VERSION = "openrouter-app@1.0.0"
 #: models with no reasoning mode.
 LOW_REASONING = {"effort": "low", "exclude": True}
 
+#: The shortest match deadline these fighters can actually answer inside.
+#:
+#: ``decision`` gives the model 70% of the deadline, and the slowest fighter here took
+#: 13.9 s for one decision, so anything under this produces a fighter that times out
+#: on *every* tick. That failure is nearly invisible in the arena — a hedge is a legal
+#: move, so there is no penalty, no no-move and no event — and it ends as a 0–0 draw
+#: that reads like a broken engine rather than a deadline set too tight. `fill_agent`
+#: refuses below this rather than letting the host find out at tick 60.
+MIN_DEADLINE_MS = 30_000
+
 #: Room for the reasoning a model does anyway plus one small JSON object. Cutting
 #: this too fine is how a reasoning model returns an empty string and hedges every
 #: tick — a fallback loop that looks like a bad agent but is a bad token budget.
-MAX_TOKENS = 1024
+#:
+#: 1024 was too fine. The free roster reasons before it answers — 450–570 completion
+#: tokens is typical and the tail runs well past it — and Ricochet spent a whole match
+#: hedging on `bad reply (not JSON)` because the budget ran out mid-thought. Raising it
+#: took that fighter from 1-in-3 parsed to 3-in-3. The ceiling costs nothing when it is
+#: not reached: models are billed for what they emit, not for the headroom.
+MAX_TOKENS = 2048
 
 #: Not the 0.0 the harness pins. That is right for a measurement, where a varying
 #: sampler is noise between two rows; here it would mean two runs of the same
@@ -88,27 +104,35 @@ class Fighter:
         }
 
 
+#: The roster runs on OpenRouter's **free** models, so the demo costs nothing to put
+#: in a corner and an account with no credits can still hold a fight. Three different
+#: families, as before: the point of the roster is three genuinely different agents,
+#: and two fighters sharing a base model would make a match between them a mirror.
+#:
+#: Free models are slower and busier than paid ones, which is the whole reason
+#: `MIN_DEADLINE_MS` exists — measured latencies at the time of writing were 3.7 s,
+#: 5.2 s and 13.9 s for one decision.
 ROSTER: tuple[Fighter, ...] = (
     Fighter(
         key="bulldozer",
         name="Bulldozer",
-        model="anthropic/claude-haiku-4.5",
+        model="google/gemma-4-26b-a4b-it:free",
         persona_key="aggressor",
-        blurb="Claude Haiku 4.5 pressure fighter — forward, always, happy to trade.",
+        blurb="Gemma 4 26B pressure fighter — forward, always, happy to trade.",
     ),
     Fighter(
         key="ricochet",
         name="Ricochet",
-        model="google/gemini-3.6-flash",
+        model="nvidia/nemotron-3-nano-30b-a3b:free",
         persona_key="counter_puncher",
-        blurb="Gemini 3.6 Flash counter-puncher — invites the shot, dodges, ripostes.",
+        blurb="Nemotron 3 Nano counter-puncher — invites the shot, dodges, ripostes.",
     ),
     Fighter(
         key="cipher",
         name="Cipher",
-        model="openai/gpt-5.4-mini",
+        model="openai/gpt-oss-20b:free",
         persona_key="pattern_reader",
-        blurb="GPT-5.4 mini pattern reader — plays your habits, not you.",
+        blurb="GPT-OSS 20B pattern reader — plays your habits, not you.",
     ),
 )
 

@@ -34,6 +34,8 @@ export function Lobby({ code, view, hostToken, demo }: LobbyProps) {
   const isHost = Boolean(hostToken);
   const bothFilled = Boolean(view.corners.agent_a && view.corners.agent_b);
 
+  const bracket = view.config?.deadline_ms ?? 0;
+
   // Only the host can act on it, but it is fetched for everyone: it is public, it
   // is one request, and a spectator seeing which fighters are on offer costs
   // nothing. A server without the roster simply leaves this null.
@@ -113,6 +115,7 @@ export function Lobby({ code, view, hostToken, demo }: LobbyProps) {
             isHost={isHost}
             disabled={demo || busy !== null}
             roster={roster}
+            bracket={bracket}
             onAddBot={(bot) => addBot(corner, bot)}
             onAddAgent={(agent) => addAgent(corner, agent)}
           />
@@ -148,6 +151,7 @@ function CornerCard({
   isHost,
   disabled,
   roster,
+  bracket,
   onAddBot,
   onAddAgent,
 }: {
@@ -156,6 +160,8 @@ function CornerCard({
   isHost: boolean;
   disabled: boolean;
   roster: AgentRoster | null;
+  /** This match's `deadline_ms`, to check against the roster's floor. */
+  bracket: number;
   onAddBot: (bot: BotName) => void;
   onAddAgent: (agent: string) => void;
 }) {
@@ -163,6 +169,12 @@ function CornerCard({
   const [agent, setAgent] = useState<string>('');
   const side = corner === 'agent_a' ? 'a' : 'b';
   const fighters = roster?.agents ?? [];
+  // The roster runs on free models, which need seconds to answer. A match created
+  // inside a tighter bracket cannot be filled from it (spec 8.6), and saying so here
+  // matters because the failure it prevents is invisible: every tick would time out
+  // into a legal, unpenalised fallback and the fight would end 0-0.
+  const floor = roster?.min_deadline_ms ?? 0;
+  const bracketTooTight = Boolean(floor && bracket && bracket < floor);
   const chosen = fighters.find((entry) => entry.key === agent) ?? fighters[0];
 
   return (
@@ -218,21 +230,25 @@ function CornerCard({
                       ))}
                     </select>
                     <button
-                      disabled={disabled || !roster?.available}
+                      disabled={disabled || !roster?.available || bracketTooTight}
                       onClick={() => onAddAgent(chosen.key)}
                       title={
-                        roster?.available
-                          ? 'Spends the server’s OpenRouter credit: one model call per tick'
-                          : (roster?.reason ?? 'Unavailable')
+                        bracketTooTight
+                          ? `This match allows ${bracket} ms per decision; the roster needs ${floor} ms`
+                          : roster?.available
+                            ? 'One model call per tick, against the server’s OpenRouter key'
+                            : (roster?.reason ?? 'Unavailable')
                       }
                     >
                       Add LLM agent
                     </button>
                   </div>
                   <small className="hint">
-                    {roster?.available
-                      ? `${chosen.blurb} Costs API credit — one call per tick.`
-                      : (roster?.reason ?? 'LLM agents are unavailable on this server.')}
+                    {bracketTooTight
+                      ? `This match allows ${bracket} ms per decision and these fighters need at least ${floor} ms. Below that every move is a timed-out fallback and the fight ends 0–0. Create a new match with deadline_ms ${floor} or higher.`
+                      : roster?.available
+                        ? `${chosen.blurb} One model call per tick.`
+                        : (roster?.reason ?? 'LLM agents are unavailable on this server.')}
                   </small>
                 </>
               )}

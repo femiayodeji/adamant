@@ -45,6 +45,11 @@ const FULL: FighterState = {
 };
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4] as const;
+
+/** Ticks of nothing but fallbacks before the arena says so out loud. Three is past
+ *  coincidence: a corner whose model cannot be reached fails on every tick, and the
+ *  match otherwise looks like two cautious fighters holding their guard. */
+const SILENT_AFTER = 3;
 /** How long the end card is held on screen at the end of a recorded replay. */
 const END_CARD_MS = 1800;
 
@@ -129,6 +134,13 @@ export function Arena({
    *  the stored preference here instead would make the server's HTML and the
    *  client's first render disagree. It is restored in an effect below. */
   const [sound, setSound] = useState(false);
+  /** Per corner: ticks seen, and how many came from a finished decision rather than
+   *  the agent's local default. A corner at 0 real decisions is not fighting. */
+  const decisions = useRef<Record<Corner, { ticks: number; real: number }>>({
+    agent_a: { ticks: 0, real: 0 },
+    agent_b: { ticks: 0, real: 0 },
+  });
+  const [silent, setSilent] = useState<Corner[]>([]);
 
   const replaying = transport !== null;
 
@@ -158,6 +170,25 @@ export function Arena({
         ...rows,
         ...snapshot.events.map((event) => ({ tick: snapshot.tick, event })),
       ]);
+    }
+    // `fallback` rides on every move (spec 6.1) and is the only signal that an
+    // agent's model never answered — there is no penalty and no event, because a
+    // hedge is a legal move.
+    const telemetry = snapshot.telemetry;
+    if (telemetry) {
+      for (const corner of CORNERS) {
+        const flag = telemetry[corner]?.fallback;
+        if (flag === undefined) continue;
+        const seen = decisions.current[corner];
+        seen.ticks += 1;
+        if (!flag) seen.real += 1;
+      }
+      setSilent(
+        CORNERS.filter((corner) => {
+          const seen = decisions.current[corner];
+          return seen.ticks >= SILENT_AFTER && seen.real === 0;
+        }),
+      );
     }
   }, []);
 
@@ -565,7 +596,12 @@ export function Arena({
 
           <div className="hud">
             <div className="hud-top">
-              <FighterPanel corner="agent_a" name={names.agent_a} state={state.agent_a} />
+              <FighterPanel
+                corner="agent_a"
+                name={names.agent_a}
+                state={state.agent_a}
+                fallback={hud?.telemetry?.agent_a?.fallback ?? false}
+              />
               <div className="tickbox">
                 <div className="n mono">
                   {String(hud?.tick ?? 0).padStart(2, '0')}
@@ -573,7 +609,12 @@ export function Arena({
                 </div>
                 <div className="l">tick</div>
               </div>
-              <FighterPanel corner="agent_b" name={names.agent_b} state={state.agent_b} />
+              <FighterPanel
+                corner="agent_b"
+                name={names.agent_b}
+                state={state.agent_b}
+                fallback={hud?.telemetry?.agent_b?.fallback ?? false}
+              />
             </div>
 
             <div className="moves">
@@ -592,6 +633,21 @@ export function Arena({
           </div>
 
           <Callouts hud={hud} />
+
+          {silent.length > 0 && !replaying && (
+            <div className="stage-note">
+              <b>
+                {silent.length === 2
+                  ? 'Neither corner is deciding.'
+                  : `${names[silent[0]]} is not deciding.`}
+              </b>{' '}
+              Every move so far has been a fallback — the agent&rsquo;s local default,
+              played because its model did not answer. A fallback is a legal move with
+              no penalty, so the fight will run its full length and finish scoreless.
+              Check the corner&rsquo;s API key, credit and the match&rsquo;s{' '}
+              <code>deadline_ms</code>.
+            </div>
+          )}
 
           {/* Outside `.hud`, which is `pointer-events: none` and is a two-row layout
               with nowhere to put a third thing. */}
@@ -863,10 +919,12 @@ function FighterPanel({
   corner,
   name,
   state,
+  fallback,
 }: {
   corner: Corner;
   name: string;
   state: FighterState;
+  fallback?: boolean;
 }) {
   const side = corner === 'agent_a' ? 'a' : 'b';
   return (
@@ -876,6 +934,21 @@ function FighterPanel({
           {side.toUpperCase()}
         </span>
         <span className="hud-name">{name}</span>
+        {/* This move came from the agent's local hedge, not from a finished
+            decision. Legal, unpenalised, and otherwise completely invisible — which
+            is how a corner whose model never answered once can fight a whole match
+            looking merely cautious. */}
+        {fallback && (
+          <span
+            className="fallback"
+            title="This move came from the agent's local fallback, not a model decision."
+          >
+            FALLBACK
+            <span className="sr-only">
+              {`${name}'s last move was a fallback, not a model decision`}
+            </span>
+          </span>
+        )}
       </div>
       <Gauge kind="hp" side={side} label="HP" value={state.hp} />
       <Gauge kind="st" side={side} label="ST" value={state.stamina} />

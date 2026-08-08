@@ -235,6 +235,10 @@ export interface AgentRoster {
   available: boolean;
   reason: string | null;
   provider: string;
+  /** The shortest `deadline_ms` these fighters can answer inside (spec 8.6). Below
+   *  it `fill_agent` is a 409: every tick would time out into a fallback, and the
+   *  match would finish 0-0 without ever looking broken. */
+  min_deadline_ms?: number;
   agents: LlmAgent[];
 }
 

@@ -63,6 +63,15 @@ class CornerClient:
         """`state_update` → `(action, telemetry)`. Telemetry is logged verbatim."""
         raise NotImplementedError
 
+    def unrecoverable(self) -> Optional[str]:
+        """A reason this client can never decide again, or None to keep fighting.
+
+        Checked after every tick. A pure strategy never has one; a model client does
+        when the account behind it cannot be charged, and answering the remaining
+        ticks with a hedge would only produce a scoreless draw under the model's name.
+        """
+        return None
+
     async def aclose(self) -> None:
         """Release brain-side resources. Called once, after the socket closes."""
 
@@ -124,6 +133,20 @@ class CornerClient:
                             }
                         )
                     )
+                    # The already-decided move goes out first, costing nothing;
+                    # whether that tick resolves depends on which the server notices
+                    # first, and either way it stops here rather than hedging out the
+                    # rest of the match. The match then pauses on a missing corner,
+                    # which is what this failure actually is (spec §6.4).
+                    reason = self.unrecoverable()
+                    if reason:
+                        logger.error(
+                            "%s cannot continue after tick %s: %s",
+                            self.name,
+                            message["tick"],
+                            reason,
+                        )
+                        break
                 elif kind == "match_end":
                     break
         except Exception:

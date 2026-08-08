@@ -627,8 +627,9 @@ The roster is the three fighters of `agents/openrouter_app`, each an OpenRouter 
   "available": true,
   "reason": null,
   "provider": "openrouter",
+  "min_deadline_ms": 30000,
   "agents": [
-    {"key": "bulldozer", "name": "Bulldozer", "model": "anthropic/claude-haiku-4.5", "persona": "aggressor", "blurb": "…"},
+    {"key": "bulldozer", "name": "Bulldozer", "model": "google/gemma-4-26b-a4b-it:free", "persona": "aggressor", "blurb": "…"},
     {"key": "ricochet", "…": {}},
     {"key": "cipher", "…": {}}
   ]
@@ -646,6 +647,8 @@ The roster is the three fighters of `agents/openrouter_app`, each an OpenRouter 
 | No key configured on the server | `503` |
 | `agent` not in the roster, or `model` not a non-empty string | `422` |
 | Match not in `lobby`, or that corner already filled | `409` |
+| Match `deadline_ms` below `min_deadline_ms` | `409` |
+| The key is configured but the model will not answer | `503`, carrying the provider's message |
 | Success | `200` — `{corner, agent, model}` |
 
 Two properties are load-bearing:
@@ -654,6 +657,14 @@ Two properties are load-bearing:
 - **It spends money, visibly.** One model call per LLM corner per tick, against the *server's* key. Hence the `503` rather than a silent downgrade to something free: a corner recorded in the log as a model, that was in fact a heuristic, would poison the evaluation dataset. The lobby says the cost before the button is pressed.
 
 A model that ignores the output contract, times out, or hits a provider outage is a **hedge**, not a lost corner: the decision loop falls back to a defensive action and marks the move `fallback` (§10). The socket stays open, so none of that is mistaken for infrastructure failure.
+
+**A hedge is only correct while the next tick might succeed.** Two failures fail identically forever, and hedging through them produces the worst possible record — a full match of `block_high` against `block_high`, no damage, no events, a 0–0 draw, and a log naming a model that never answered once. Nothing about that looks like a failure, which is exactly the problem. So:
+
+- **The model is called once before the corner is taken.** A single one-token request. `401`, `402` and `403` — bad key, unpayable account, model not permitted — become a `503` from `fill_agent` carrying the provider's own message, and the corner stays empty. Only these three are treated as permanent; a `429` from a busy free-tier provider, a `5xx` and a timeout are all worth retrying next tick.
+- **The same three end the corner mid-match.** The client answers the tick it is holding and then stops, so the match pauses on a missing corner and ends `abandoned` if nobody refills it (§6.4). That keeps infrastructure failure distinguishable from combat, which a hedged-out draw does not.
+- **`min_deadline_ms` is the bracket the roster can answer inside.** The roster runs on free OpenRouter models, which are slower and busier than paid ones; below the floor every tick times out into a hedge and the same invisible 0–0 draw follows. `fill_agent` refuses the fill rather than letting the host discover it at the final bell.
+
+`telemetry.fallback` rides on every move and survives into the live spectator stream (§7) for the same reason: it is the only signal that a corner is not really fighting, and a client that ignores it shows a model that never answered as a cautious fighter.
 
 ---
 

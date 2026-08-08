@@ -72,8 +72,22 @@ echo 'OPENROUTER_API_KEY=...' >> .env       # gitignored
 
 The same three are reachable from the lobby's **Add LLM agent** button, or over REST
 (`GET /api/agents`, `POST /api/matches/{ref}/fill_agent`), which runs them inside the
-server against its own key. Either way it **costs money**: one model call per LLM
-corner per tick.
+server against its own key.
+
+The roster runs on OpenRouter's **free** models, so a key with no credit on it can
+still hold a fight. Two consequences worth knowing before you create the match:
+
+- **Free models are slow** — measured at 3.7 s, 5.2 s and 13.9 s for one decision. The
+  agent gets 70% of `deadline_ms`, so `fill_agent` refuses any match under
+  `min_deadline_ms` (30 000). Create with `-d '{"deadline_ms": 30000}'`. Under it,
+  every tick times out into a fallback and the match ends 0–0 without ever looking
+  broken.
+- **Free models are rate-limited per day.** A 60-tick match with both corners filled
+  is 120 model calls. Keep `max_ticks` low, or put credit on the account — a paid
+  model and a `model` override let you go back to a 5 s bracket.
+
+Point a fighter at a paid model with `--model`, or `{"model": "…"}` on `fill_agent`,
+and it **costs money**: one model call per LLM corner per tick.
 
 ## Tests
 

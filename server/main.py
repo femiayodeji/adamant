@@ -287,6 +287,10 @@ async def get_agents():
         "available": available,
         "reason": reason,
         "provider": "openrouter",
+        # The roster runs on free models, which are slower than paid ones. A match
+        # created inside the default 5 s bracket cannot be filled from it, so the
+        # lobby needs the floor to say why before the button is pressed (spec §8.6).
+        "min_deadline_ms": llm_agents.min_deadline_ms(),
         "agents": llm_agents.roster(),
     }
 
@@ -332,13 +336,33 @@ async def fill_agent(
     if match.corners[corner] is not None:
         raise HTTPException(status_code=409, detail=f"{corner} is already filled")
 
-    taken = await llm_agents.spawn(
-        url=_ws_base(request),
-        code=match.match_code,
-        agent=agent,
-        corner=corner,
-        model=model,
-    )
+    floor = llm_agents.min_deadline_ms()
+    if floor and match.config.deadline_ms < floor:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"deadline_ms is {match.config.deadline_ms}; the roster needs at least "
+                f"{floor} to answer a tick. Below it every move is a timed-out fallback, "
+                f"which fights to a 0-0 draw without ever looking broken. "
+                f"Create the match with deadline_ms >= {floor}."
+            ),
+        )
+
+    try:
+        taken = await llm_agents.spawn(
+            url=_ws_base(request),
+            code=match.match_code,
+            agent=agent,
+            corner=corner,
+            model=model,
+        )
+    except llm_agents.ModelUnreachable as exc:
+        # The key is configured but the model would not answer — an unpayable account,
+        # a revoked key, a model this key may not use. A `503` for the same reason a
+        # missing key is one: the alternative is a corner that takes the ring under a
+        # model's name and then hedges every tick of the match.
+        raise HTTPException(status_code=503, detail=f"{agent} could not reach its model: {exc}") from exc
+
     match.bot_fills[taken] = {"kind": "llm", "agent": agent, "model": model}
     return {"corner": taken, "agent": agent, "model": model or known[agent]["model"]}
 

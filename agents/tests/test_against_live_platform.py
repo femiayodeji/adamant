@@ -122,6 +122,49 @@ async def test_a_slow_model_hedges_in_time_instead_of_no_moving(arena):
     assert log["match_end"]["final_state"]["agent_a"]["penalties"] == 0
 
 
+async def test_both_corners_failing_every_tick_still_produces_a_readable_log(arena):
+    """What a match looks like when neither agent's model call ever succeeds --
+    a bad key, a rate limit, anything decide()'s broad `except Exception` catches.
+
+    Both corners hedge every tick, block vs. block resolves to nothing (spec 4.4),
+    and the match runs its full length as a 0-0 draw with zero combat events. That is
+    correct engine behaviour, not a bug -- the actual defect was that this state was
+    indistinguishable, on the wire, from two agents legitimately playing a very
+    passive match. `telemetry.fallback` is how a viewer or a log reader tells the
+    two apart, so it must be `True` for every tick, for both corners, here.
+    """
+
+    async def always_fails(system, user, deadline_ms):
+        raise RuntimeError("simulated API failure")
+
+    created = await arena.create_match()
+    code, host = created["match_code"], created["host_token"]
+
+    decider = make_decider(always_fails)
+    agent_a = asyncio.create_task(run_match(arena.ws, code, "Bulldozer", PROFILE, decider))
+    agent_b = asyncio.create_task(run_match(arena.ws, code, "Ricochet", PROFILE, decider))
+    await asyncio.sleep(0.2)
+    assert (await arena.start(code, host)).status_code == 200
+
+    end_a, end_b = await asyncio.wait_for(asyncio.gather(agent_a, agent_b), timeout=120)
+    log = (await arena.get(f"/api/matches/{code}/log")).json()
+
+    assert end_a is not None and end_b is not None
+    assert log["match_end"]["reason"] == "draw" and log["match_end"]["winner"] is None
+
+    all_events = [e for tick in log["ticks"] for e in tick["events"]]
+    assert all_events == [], "block vs. block is a null event by spec 4.4"
+
+    for tick in log["ticks"]:
+        for corner in ("agent_a", "agent_b"):
+            assert tick["telemetry"][corner]["fallback"] is True
+            assert tick["telemetry"][corner]["reason"], "a silent fallback is not diagnosable"
+
+    final = log["match_end"]["final_state"]
+    for corner in ("agent_a", "agent_b"):
+        assert final[corner]["hp"] == 100 and final[corner]["points"] == 0
+
+
 async def test_an_unparseable_model_never_produces_an_invalid_action(arena):
     """Phase 5's validity criterion, measurable without a live model: whatever the
     model says, the agent must never put a non-action on the wire."""

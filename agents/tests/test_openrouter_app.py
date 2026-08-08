@@ -130,7 +130,9 @@ async def test_the_request_is_the_one_openrouter_expects():
     assert (tokens_in, tokens_out) == (640, 25)
     assert json.loads(text)["action"] == "hook"
     payload = client.post.payloads[0]
-    assert payload["model"] == "anthropic/claude-haiku-4.5"
+    # Against the roster, not a literal: the model ids are the one part of the roster
+    # with a shelf life, and a test that pins one turns a routine swap into a failure.
+    assert payload["model"] == roster.get_fighter("bulldozer").model
     assert payload["messages"] == [
         {"role": "system", "content": "SYS"},
         {"role": "user", "content": "USER"},
