@@ -64,6 +64,18 @@ export function useMatchFeed({ code, demo, onTick, onMatchStart }: FeedOptions) 
   tickRef.current = onTick;
   startRef.current = onMatchStart;
 
+  /**
+   * The highest tick already forwarded to the renderer.
+   *
+   * Every `/ws/watch` connection replays the whole match from tick 1 (spec 7), which
+   * is what makes a watch link work mid-fight — and what makes a reconnect a second
+   * telling of a fight already on screen. Without this the HUD rewinds to tick 1, the
+   * event log doubles, and a fighter already on the deck stays there through the
+   * replay while the winner shadowboxes alone. Ticks are 1-indexed and monotonic, so
+   * the high-water mark is the whole de-duplication rule.
+   */
+  const seenTick = useRef(0);
+
   const handle = useCallback((msg: SpectatorMessage) => {
     switch (msg.type) {
       case 'lobby_update':
@@ -74,17 +86,22 @@ export function useMatchFeed({ code, demo, onTick, onMatchStart }: FeedOptions) 
         }));
         break;
       case 'match_start':
-        startRef.current?.();
+        // On a reconnect this is the catch-up copy of a start we already handled.
+        // Clearing the arena, the result banner and the pause overlay here would
+        // discard the fight we are already showing.
+        if (seenTick.current === 0) startRef.current?.();
         setView((v) => ({
           ...v,
-          phase: 'live',
+          phase: seenTick.current === 0 ? 'live' : v.phase,
           corners: msg.agents,
           config: msg.config ?? v.config,
-          end: null,
-          paused: null,
+          end: seenTick.current === 0 ? null : v.end,
+          paused: seenTick.current === 0 ? null : v.paused,
         }));
         break;
       case 'tick_result':
+        if (msg.tick <= seenTick.current) break;
+        seenTick.current = msg.tick;
         tickRef.current(msg);
         setView((v) => (v.phase === 'live' ? v : { ...v, phase: 'live', paused: null }));
         break;
@@ -96,6 +113,11 @@ export function useMatchFeed({ code, demo, onTick, onMatchStart }: FeedOptions) 
         break;
       case 'match_end':
         setView((v) => ({ ...v, phase: 'ended', end: msg, paused: null }));
+        break;
+      case 'error':
+        // The server sends this and closes; the code will never resolve, so there is
+        // nothing for the retry loop to come back to.
+        setView((v) => ({ ...v, error: msg.reason, connection: 'closed' }));
         break;
     }
   }, []);
@@ -121,6 +143,10 @@ export function useMatchFeed({ code, demo, onTick, onMatchStart }: FeedOptions) 
     let socket: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
+    let fatal = false;
+    // A different code is a different fight: the previous one's high-water mark
+    // would suppress every tick of this one (spec 8.4 — a rematch is a new match).
+    seenTick.current = 0;
 
     // Seed from REST so a spectator arriving mid-fight, or after it finished,
     // sees the right view before any socket traffic arrives (spec 8.1: {ref}
@@ -159,13 +185,15 @@ export function useMatchFeed({ code, demo, onTick, onMatchStart }: FeedOptions) 
       };
       socket.onmessage = (event) => {
         try {
-          handle(JSON.parse(event.data as string) as SpectatorMessage);
+          const msg = JSON.parse(event.data as string) as SpectatorMessage;
+          if (msg.type === 'error') fatal = true;
+          handle(msg);
         } catch {
           /* a message we cannot parse is not worth tearing the page down over */
         }
       };
       socket.onclose = () => {
-        if (closed) return;
+        if (closed || fatal) return;
         setView((v) => ({ ...v, connection: 'closed' }));
         attempt += 1;
         retry = setTimeout(connect, Math.min(1000 * attempt, 8000));

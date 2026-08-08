@@ -31,7 +31,7 @@ CORNERS = ("agent_a", "agent_b")
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m agents.openrouter_app",
-        description="Send one or two OpenRouter-powered fighters into an ADAM Arena match",
+        description="Send one or two OpenRouter-powered fighters into an Adamant match",
     )
     parser.add_argument("--code", help="match code, e.g. RUMBLE-4F2")
     parser.add_argument(

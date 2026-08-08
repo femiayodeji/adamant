@@ -145,51 +145,79 @@ class CycleBot(Strategy):
 
 
 class FrequencyBot(Strategy):
-    """Counters the opponent's most-used action so far.
+    """Reads the opponent's action distribution and answers the whole of it.
 
     Probes whether an agent notices it is being read and starts mixing. Its own
-    exploitability is the point.
+    exploitability is the point — but it has to be exploitable *because it reads*,
+    not because of an accident of the history window.
+
+    It counts attacks and defenses in separate pools and picks the answer that
+    covers the most of whichever pool is larger, weighted by how often each action
+    appeared. Deliberately **not** the single most-used action: the window is only
+    ten ticks (spec §6.2), so against anything with a short period the plurality is
+    decided by whichever action happens to be sitting at the window's edge, and it
+    rotates as the window slides. Against a `jab block_high cross` cycle that made
+    the bot flip from correctly dodging every punch to standing up and throwing
+    hook on a fixed cadence at exactly tick 12 — the tick the opening `jab` fell
+    out of the window — and eating clean hits it had been evading, with nothing
+    about the opponent having changed. A distribution moves smoothly where a
+    plurality jumps, so the read no longer turns on one count.
     """
 
     name = "frequency"
 
     def decide(self, ctx: Context) -> str:
-        counts: dict[str, int] = {}
+        attacks: dict[str, int] = {}
+        defenses: dict[str, int] = {}
+        seen = 0
         for entry in ctx.get("history", []):
             action = entry.get("moves", {}).get("opponent")
-            if action in rules.ACTIONS:
-                counts[action] = counts.get(action, 0) + 1
+            if action not in rules.ACTIONS:
+                continue
+            seen += 1
+            if rules.is_attack(action):
+                attacks[action] = attacks.get(action, 0) + 1
+            elif rules.is_defense(action):
+                defenses[action] = defenses.get(action, 0) + 1
 
-        if not counts:
+        if not seen:
             return self._respecting_cap(ctx, self._or_idle(ctx, "jab"))
 
-        # Ties broken by ACTIONS order for determinism, not by dict insertion.
-        top = max(rules.ACTIONS, key=lambda a: (counts.get(a, 0), -rules.ACTIONS.index(a)))
+        # Guard while the opponent throws at least as often as it guards: eating a
+        # punch costs more than missing a punish, so the tie goes to defending.
+        if attacks and sum(attacks.values()) >= sum(defenses.values()):
+            return self._guard(ctx, attacks)
+        return self._punish(ctx, defenses)
 
-        if rules.is_attack(top):
-            # Prefer a dodge — it ripostes — but only when affordable.
-            dodges = [d for d in DEFENSES if rules.counters(d, top) and rules.riposte_of(d)]
-            blocks = [d for d in DEFENSES if rules.counters(d, top) and not rules.riposte_of(d)]
-            for candidate in dodges + blocks:
-                if self._affordable(ctx, candidate) and not self._would_void(ctx, candidate):
-                    return candidate
-            return self._respecting_cap(ctx, IDLE)
+    def _guard(self, ctx: Context, attacks: dict[str, int]) -> str:
+        """The defense covering the most of the opponent's attacks. Ties prefer a
+        dodge — it ripostes — and then `ACTIONS` order, never dict insertion."""
+        ranked = sorted(
+            DEFENSES,
+            key=lambda d: (
+                -sum(n for atk, n in attacks.items() if rules.counters(d, atk)),
+                not rules.riposte_of(d),
+                rules.ACTIONS.index(d),
+            ),
+        )
+        return self._first_playable(ctx, ranked)
 
-        if rules.is_defense(top):
-            # Throw the hardest attack that this defense does not counter.
-            for attack in ("hook", "cross", "jab"):
-                if (
-                    not rules.counters(top, attack)
-                    and self._affordable(ctx, attack)
-                    and not self._would_void(ctx, attack)
-                ):
-                    return attack
-            return self._respecting_cap(ctx, IDLE)
+    def _punish(self, ctx: Context, defenses: dict[str, int]) -> str:
+        """The hardest attack the opponent's guards cover least. An opponent that
+        mostly idles covers nothing, so this is `hook` first."""
+        ranked = sorted(
+            rules.ATTACKS,
+            key=lambda atk: (
+                sum(n for d, n in defenses.items() if rules.counters(d, atk)),
+                -rules.damage_of(atk),
+            ),
+        )
+        return self._first_playable(ctx, ranked)
 
-        # Opponent idles a lot: hit it as hard as stamina allows.
-        for attack in ("hook", "cross", "jab"):
-            if self._affordable(ctx, attack) and not self._would_void(ctx, attack):
-                return attack
+    def _first_playable(self, ctx: Context, ranked: list[str]) -> str:
+        for candidate in ranked:
+            if self._affordable(ctx, candidate) and not self._would_void(ctx, candidate):
+                return candidate
         return self._respecting_cap(ctx, IDLE)
 
 

@@ -1,6 +1,6 @@
 """The boxing rules an agent needs to know, as data plus a prompt-ready summary.
 
-Source of truth: docs/arena_spec.md sections 2-5 (v0.6).  The platform owns the
+Source of truth: docs/adamant_spec.md sections 2-5 (v0.6).  The platform owns the
 real table; this is the agent-side mirror used for prompting and for offline log
 analysis.  ``test_rules.py`` checks the prose summary against the data.
 """
@@ -102,7 +102,7 @@ def fallback_action(fighter: dict | None = None) -> str:
     return FALLBACK_ACTION
 
 RULES_SUMMARY = """\
-ADAM Arena - boxing rules (spec v0.6)
+Adamant - boxing rules (spec v0.6)
 
 Two fighters. Each tick both secretly submit ONE of eight actions; the moves
 resolve simultaneously against the state at the start of the tick, so a fighter

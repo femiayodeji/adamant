@@ -1,4 +1,4 @@
-"""A small standalone app that fights ADAM Arena matches with OpenRouter models.
+"""A small standalone app that fights Adamant matches with OpenRouter models.
 
     python -m agents.openrouter_app --list
     python -m agents.openrouter_app --code RUMBLE-4F2 --agent bulldozer --agent cipher

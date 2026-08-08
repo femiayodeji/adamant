@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import secrets
 import time
 from dataclasses import dataclass
@@ -140,6 +141,10 @@ class Match:
         self._wake = asyncio.Event()
         self._resume_wake = asyncio.Event()
 
+        # Monotonic deadline of the resume window while paused, so a spectator who
+        # arrives or reconnects mid-pause can be told how much of it is left.
+        self._pause_deadline: Optional[float] = None
+
     # ─── lobby ───
 
     def touch(self) -> None:
@@ -250,6 +255,10 @@ class Match:
     def _missing(self) -> list[Corner]:
         return [c for c in CORNERS if self.corners[c] is None or self.corners[c].ws is None]
 
+    def missing_corners(self) -> list[Corner]:
+        """The corners with no live socket. Public for the spectator catch-up."""
+        return self._missing()
+
     def lobby_payload(self) -> dict[str, Any]:
         return {
             "type": "lobby_update",
@@ -285,7 +294,8 @@ class Match:
         A rejected submission does *not* immediately lock in a no-move: the agent may
         retry until the deadline, and only the last rejection reason is recorded if
         nothing valid ever arrives. A duplicate is dropped outright — the first valid
-        move is kept — so `duplicate` never becomes a no-move cause.
+        move is kept — so `duplicate` never becomes a no-move cause. A move for a tick
+        that has already resolved is dropped the same way (`protocol.STALE`).
         """
         if self.status != IN_PROGRESS:
             return
@@ -293,6 +303,8 @@ class Match:
             return  # duplicate: the first is kept
 
         action, cause = protocol.classify_move(payload, self._current_tick)
+        if cause == protocol.STALE:
+            return  # a late answer to a tick that is already in the log
         if cause is not None:
             self._rejections[corner] = cause
             return
@@ -492,6 +504,27 @@ class Match:
         )
         return True
 
+    def paused_payload(self, tick: int, missing: Corner, resume_window_ms: int) -> dict[str, Any]:
+        return {
+            "type": "match_paused",
+            "tick": tick,
+            "missing": missing,
+            "resume_window_ms": resume_window_ms,
+        }
+
+    def resume_window_left_ms(self) -> int:
+        """How much of the resume window is still to run; the whole of it if not paused.
+
+        `match_paused` is broadcast once, at the moment the corner drops, and never
+        again — so a spectator who opens the watch link mid-pause, or whose own socket
+        blipped during one, needs the frame replayed in the catch-up to get the overlay
+        at all. Replaying it with the *configured* window would show a countdown longer
+        than the one actually running.
+        """
+        if self._pause_deadline is None:
+            return self.config.resume_window_ms
+        return max(0, math.ceil((self._pause_deadline - time.monotonic()) * 1000))
+
     async def _pause_and_await_resume(self, tick: int) -> bool:
         """Stop the deadline clock for *both* corners and wait for the missing one.
 
@@ -503,27 +536,25 @@ class Match:
         announced: set[Corner] = set()
 
         deadline = time.monotonic() + self.config.resume_window_ms / 1000
+        self._pause_deadline = deadline
         while True:
             missing = self._missing()
             for corner in missing:
                 if corner not in announced:
                     announced.add(corner)
                     await self._to_all(
-                        {
-                            "type": "match_paused",
-                            "tick": tick,
-                            "missing": corner,
-                            "resume_window_ms": self.config.resume_window_ms,
-                        }
+                        self.paused_payload(tick, corner, self.config.resume_window_ms)
                     )
 
             if not missing:
                 self.status = IN_PROGRESS
+                self._pause_deadline = None
                 await self._to_all({"type": "match_resumed", "tick": tick})
                 return True
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                self._pause_deadline = None
                 return False
 
             self._resume_wake.clear()

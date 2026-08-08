@@ -285,7 +285,7 @@ export function Build() {
         {rulesError && (
           <div className="error">
             Could not load the live rules table ({rulesError}). It is also written out
-            in <code>docs/arena_spec.md</code> §2–§4.
+            in <code>docs/adamant_spec.md</code> §2–§4.
           </div>
         )}
         {rules && <RulesTables rules={rules} />}
@@ -387,7 +387,7 @@ export function Build() {
             checklist before you call it done.
           </li>
           <li>
-            <code>docs/arena_spec.md</code> — the contract. Every message schema, every
+            <code>docs/adamant_spec.md</code> — the contract. Every message schema, every
             number, every resolution rule. Build against this, not against the code.
           </li>
           <li>
@@ -498,7 +498,7 @@ function RulesTables({ rules }: { rules: Rules }) {
 }
 
 const PYTHON = `#!/usr/bin/env python3
-"""A complete ADAM Arena agent with no model behind it. No API key needed."""
+"""A complete Adamant agent with no model behind it. No API key needed."""
 import argparse, asyncio, json
 from websockets.asyncio.client import connect
 

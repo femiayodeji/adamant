@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADAM Arena reference agent -- copy this and make it yours.
+"""Adamant reference agent -- copy this and make it yours.
 
     python agents/reference_agent.py --code RUMBLE-4F2 --url wss://arena.example.com
 
@@ -87,7 +87,7 @@ def make_model_call(client: AsyncAnthropic, model: str):
 
 
 def parse_args(argv=None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ADAM Arena reference agent")
+    parser = argparse.ArgumentParser(description="Adamant reference agent")
     parser.add_argument("--code", required=True, help="match code, e.g. RUMBLE-4F2")
     parser.add_argument("--url", required=True, help="platform base URL, e.g. wss://host")
     parser.add_argument("--name", default=None, help="display name, [A-Za-z0-9 _-]{1,24}")

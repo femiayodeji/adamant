@@ -1,4 +1,4 @@
-"""Shared pieces of an ADAM Arena agent.
+"""Shared pieces of an Adamant agent.
 
 The published reference agent (``agents/reference_agent.py``) and the evaluation
 harness (``agents/harness/``) import everything here.  Only the model client

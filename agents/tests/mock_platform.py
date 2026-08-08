@@ -1,4 +1,4 @@
-"""A mock ADAM Arena platform: just enough of spec 6 to exercise an agent.
+"""A mock Adamant platform: just enough of spec 6 to exercise an agent.
 
 Scripted, not simulated -- it plays a fixed sequence of messages at the agent and
 records everything the agent sends back. It deliberately includes the awkward

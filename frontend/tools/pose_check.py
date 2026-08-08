@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless validator for the ADAM Arena clip library.
+"""Headless validator for the Adamant clip library.
 
 Runs the same maths the renderer runs (Euler XYZ -> quaternion, forward kinematics
 down the Mixamo Xbot hierarchy), without a browser or a GPU, so the fourteen clips

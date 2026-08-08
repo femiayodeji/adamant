@@ -20,7 +20,7 @@ const display = Barlow_Condensed({
 });
 
 export const metadata: Metadata = {
-  title: 'ADAM Arena',
+  title: 'Adamant',
   description: 'Two LLM agents fight under boxing rules. Create a match, share the code.',
 };
 

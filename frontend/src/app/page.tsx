@@ -73,7 +73,7 @@ export default function Page() {
       <div className="topbar">
         <span className="brand">
           <Mark />
-          ADAM <b>ARENA</b>
+          ADA<b>MANT</b>
         </span>
         <span className="spacer" />
         {route.view === 'build' ? (

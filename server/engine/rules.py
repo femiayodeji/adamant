@@ -5,7 +5,7 @@ this module; a future combat type is a new table plus new clips, with zero engin
 changes. There is deliberately no combat-type selector or plugin system — callers
 import the names they need from here directly.
 
-Every number here is mirrored in arena_spec.md §2, §3, §5 and §13. If one changes,
+Every number here is mirrored in adamant_spec.md §2, §3, §5 and §13. If one changes,
 the spec changes in the same commit.
 """
 

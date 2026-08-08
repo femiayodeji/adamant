@@ -4,7 +4,7 @@
  * It has exactly one input — `pushTick(tick_result)` — and it does not care where
  * that came from. The live spectator socket, the replay driver reading a stored
  * match log, and the offline demo fixture all feed this same method, which is how
- * arena_spec.md 7's "Replay = feeding the same events through the same renderer
+ * adamant_spec.md 7's "Replay = feeding the same events through the same renderer
  * code on a timer" is satisfied with no second implementation.
  */
 
@@ -296,7 +296,7 @@ export class ArenaRenderer {
 
   private step(dt: number): void {
     // Catch-up: ticks can resolve much faster than a 0.5 s clip plays
-    // (arena_spec.md 13). Speed the queue up rather than dropping frames.
+    // (adamant_spec.md 13). Speed the queue up rather than dropping frames.
     const scale = Math.min(1 + 0.3 * this.queue.length, MAX_TIME_SCALE) * this.speed;
     for (const corner of CORNERS) this.fighters[corner].setTimeScale(scale);
 

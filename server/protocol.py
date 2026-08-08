@@ -46,16 +46,30 @@ def validate_profile(profile: Any) -> dict[str, Any]:
     return dict(profile)
 
 
+#: Not one of the no-move causes of spec §4.4, and deliberately so: a move for a
+#: tick that has already resolved is a late answer to a closed question, and it is
+#: dropped like a duplicate rather than recorded against the tick now open. A slow
+#: agent's overdue move for tick N lands during tick N+1, so counting it as
+#: `wrong_tick` relabelled every no-move after the first as a protocol error —
+#: turning "this agent is slow" into "this agent cannot echo a tick number", which
+#: is a different finding about the agent and the reason the causes are separate.
+STALE = "stale"
+
+
 def classify_move(payload: Any, expected_tick: int) -> tuple[Optional[str], Optional[str]]:
     """Validate an inbound `move`. Returns `(action, rejection_cause)`.
 
     Exactly one of the two is non-None. Causes match spec §4.4 and are logged
     distinctly, because "the agent was slow" and "the agent cannot follow the
-    output format" are different findings about an agent.
+    output format" are different findings about an agent. The one cause that is not
+    from §4.4 is `STALE`, which the caller drops instead of scoring.
     """
     if not isinstance(payload, dict) or payload.get("type") != "move":
         return None, "malformed"
-    if payload.get("tick") != expected_tick:
+    tick = payload.get("tick")
+    if tick != expected_tick:
+        if isinstance(tick, int) and not isinstance(tick, bool) and tick < expected_tick:
+            return None, STALE
         return None, "wrong_tick"
     action = payload.get("action")
     if action not in rules.ACTIONS:

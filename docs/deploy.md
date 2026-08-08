@@ -1,4 +1,4 @@
-# Deploying ADAM Arena
+# Deploying Adamant
 
 Phase 6 is deliberately thin: **one process** serving the REST API, both WebSocket
 endpoints, and the static frontend. The image in [`../Dockerfile`](../Dockerfile) is

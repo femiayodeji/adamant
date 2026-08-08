@@ -1,4 +1,4 @@
-"""ADAM Arena rules engine — pure, no I/O."""
+"""Adamant rules engine — pure, no I/O."""
 
 from .resolver import (  # noqa: F401
     Corner,

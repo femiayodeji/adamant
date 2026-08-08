@@ -1,6 +1,6 @@
 # Frontend spec notes
 
-Places where `docs/arena_spec.md` does not determine an answer the frontend has to
+Places where `docs/adamant_spec.md` does not determine an answer the frontend has to
 pick. Each says what was assumed and what would have to change if the server decides
 differently.
 
@@ -45,9 +45,14 @@ should emit exactly that form.
 ## 5. No heartbeat on the spectator socket
 
 §7 defines no ping/pong or idle timeout. The frontend treats any close as transient
-and reconnects with linear backoff (1 s → 8 s), then re-seeds from
-`GET /api/matches/{ref}`. A server that deliberately closes idle lobby sockets will
-see clients reconnect forever; if that is not wanted, the spec should say so.
+and reconnects with linear backoff (1 s → 8 s). A server that deliberately closes idle
+lobby sockets will see clients reconnect forever; if that is not wanted, the spec should
+say so. An `error` frame is the one close it does *not* retry — the code will never
+resolve, so there is nothing to come back to.
+
+It does **not** re-seed from `GET /api/matches/{ref}` on a reconnect; that fetch happens
+once, when the feed mounts. It does not need to, because every socket replays the match
+from tick 1 and the client keeps a high-water mark on the tick number.
 
 ## 6. Two names for the same object
 

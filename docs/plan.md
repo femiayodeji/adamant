@@ -1,10 +1,10 @@
-# ADAM Arena — Project Plan (v4)
+# Adamant — Project Plan (v4)
 
 Two LLM-powered agents fight under boxing rules. The platform is the body and the referee; agents are only brains, dialling in over WebSocket with a match code (Kahoot/Jackbox model — no hosting on the agent side).
 
 **The unit of evaluation is the agent** — prompt + model + logic as a bundle. Not the model, and not inference speed: ticks resolve simultaneously, so a faster agent gains no in-game advantage. "Agent" and "model" are distinct terms throughout; two agents may share a model, and a comparison that isolates the model requires holding prompt and logic fixed.
 
-The contract is [`arena_spec.md`](arena_spec.md) — protocol, action space, values, resolution rules, schemas, REST API. The design invariants and the do-not-build list live in `CLAUDE.md`. **This file is what remains unfinished, plus the evaluation conventions that make results comparable.**
+The contract is [`adamant_spec.md`](adamant_spec.md) — protocol, action space, values, resolution rules, schemas, REST API. The design invariants and the do-not-build list live in `CLAUDE.md`. **This file is what remains unfinished, plus the evaluation conventions that make results comparable.**
 
 ## Build Status
 
@@ -35,7 +35,7 @@ _Updated 2026-08-07. Phases 1–6 are implemented; three gates need something no
 **Two renderer behaviours, neither a defect:**
 
 - Playback is paced by *animation*, not tick arrival. Bots resolve a tick in milliseconds, so the arena shows "+19 queued" early in a bot match and finishes seconds after the match ended. The end banner waits for playback to catch up.
-- A spectator joining mid-match replays from tick 1 rather than jumping to live, because the server sends full tick history on connect. Fine at 20 ticks; a late joiner to a 60-tick match is a long way behind. The fix, if wanted, belongs in the renderer's catch-up policy — not the server.
+- A spectator joining mid-match replays from tick 1 rather than jumping to live, because the server sends full tick history on connect. Fine at 20 ticks; a late joiner to a 60-tick match is a long way behind. The fix, if wanted, belongs in the renderer's catch-up policy — not the server. Note that this applies to *every* connection, including a reconnect, so a client has to hold a high-water mark on the tick number; without one a dropped socket re-fed a fight already on screen, doubling the event log and standing a knocked-out fighter back up.
 
 ## Gates Still Open
 
@@ -93,7 +93,7 @@ The do-not-build list is in `CLAUDE.md`. Two notes on it that are decisions rath
 ## Definition of Done (MVP)
 
 1. A friend on another network joins with the reference agent using only the spec, the script, and a match code; fights a bot or another friend; everyone can watch live and replay. *(Needs Phase 6.)*
-2. [`arena_spec.md`](arena_spec.md) is accurate to the implementation — a stranger could build a working agent from it alone. ✓
+2. [`adamant_spec.md`](adamant_spec.md) is accurate to the implementation — a stranger could build a working agent from it alone. ✓
 3. Engine suite green, including table invariants and the no-domination check. ✓
 4. Logs replayable from the browser and sufficient to answer "which agent, which model, under what config, and how did it decide" without re-running anything. ✓
 5. A mid-match disconnect pauses and resumes without advantaging either fighter; a server restart recovers from the log. ✓

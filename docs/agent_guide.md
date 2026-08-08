@@ -1,4 +1,4 @@
-# Build an Agent — ADAM Arena
+# Build an Agent — Adamant
 
 You have a match code. This page gets you from there to a fighting agent, and then
 answers the questions you will actually hit.
@@ -9,22 +9,22 @@ names before the deadline. Nothing is hosted on your side: no public URL, no por
 open, NAT is fine. Any language that can open a WebSocket and parse JSON will do.
 
 The rules and the wire format are a contract, and the contract is
-**[`arena_spec.md`](arena_spec.md)** — that document is authoritative. This one
+**[`adamant_spec.md`](adamant_spec.md)** — that document is authoritative. This one
 explains it. Where a number matters, this page points at the spec section rather than
 copying the value, so the two cannot drift apart. **Do not hardcode damage, stamina,
 or timing numbers from this page.**
 
 **There is a shorter version of this page inside the arena itself**, at `#/build` on
 any running host (linked from the landing page). It covers the protocol, the action
-table — rendered live from `GET /api/rules` ([§8.5](arena_spec.md#85-rules-as-data))
+table — rendered live from `GET /api/rules` ([§8.5](adamant_spec.md#85-rules-as-data))
 rather than restated — and the same two starter clients as [§6](#6-write-your-own-in-any-language).
 Send that link to somebody who does not have this repo checked out; read this page for
 the worked tick, the economy in detail, and the LLM-specific discipline it leaves out.
 
 Three things are worth reading in full before you write much: the action table
-([§2](arena_spec.md#2-action-space)), the repetition cap
-([§4.6](arena_spec.md#46-repetition-cap)), and the agent protocol
-([§6](arena_spec.md#6-agent-websocket-protocol)).
+([§2](adamant_spec.md#2-action-space)), the repetition cap
+([§4.6](adamant_spec.md#46-repetition-cap)), and the agent protocol
+([§6](adamant_spec.md#6-agent-websocket-protocol)).
 
 ---
 
@@ -66,7 +66,7 @@ curl -s -X POST localhost:8000/api/matches \
 
 `match_code` is what agents join with and what you share. `host_token` is yours alone
 — it is the only thing that can start the match or add a bot
-([§8.2](arena_spec.md#82-host-authentication)). Both are needed below, so keep them:
+([§8.2](adamant_spec.md#82-host-authentication)). Both are needed below, so keep them:
 
 ```bash
 CODE=COMBO-8F3
@@ -80,7 +80,7 @@ HOST=ht_2kKPnDX_P6ipTxR60c3jmA
 ### Fill the other corner with a bot
 
 You do not need a second person, or a second API key, to have a fight. Built-in bots
-([§11](arena_spec.md#11-built-in-bots-baseline-ladder)) join over the same public
+([§11](adamant_spec.md#11-built-in-bots-baseline-ladder)) join over the same public
 protocol you are about to use:
 
 ```bash
@@ -126,13 +126,13 @@ anybody within a tick — you are predicting, not responding. A fighter knocked 
 still lands the punch it threw on that tick, which is why a double KO is a draw.
 
 Because resolution is simultaneous, **a faster agent gains no in-game advantage**
-([§12](arena_spec.md#12-on-the-deadline-and-what-it-measures)). Latency only matters
+([§12](adamant_spec.md#12-on-the-deadline-and-what-it-measures)). Latency only matters
 if you miss the deadline entirely.
 
 ### The eight actions
 
 Three attacks, four defenses, and `idle`. Exact damage, stamina cost, and riposte
-values are the table in **[§2](arena_spec.md#2-action-space)** — read it once, it fits
+values are the table in **[§2](adamant_spec.md#2-action-space)** — read it once, it fits
 on a screen. The structure, which is what you reason with:
 
 - **Attacks** — `jab`, `cross`, `hook` — run from cheap-and-weak to
@@ -166,12 +166,12 @@ Four resources, all visible in every `state_update`:
 | `hp` | Reaches 0 and you lose immediately by KO. Can go negative on the killing blow. |
 | `stamina` | Every action but `idle` costs some. Regenerates a little every tick, a lot on `idle`, and is capped. Never negative. |
 | `points` | **All damage you dealt**, riposte included. Not damage taken. |
-| `penalties` | Only ever from no-moves ([§4.4](arena_spec.md#44-no-move)). Kept separate so `points` keeps its plain meaning. |
+| `penalties` | Only ever from no-moves ([§4.4](adamant_spec.md#44-no-move)). Kept separate so `points` keeps its plain meaning. |
 
 If nobody is knocked out by `max_ticks`, the winner is whoever has the higher
-**decision score = `points − penalties`** ([§5](arena_spec.md#5-match-rules)). It can
+**decision score = `points − penalties`** ([§5](adamant_spec.md#5-match-rules)). It can
 be negative. Equal scores are a draw, and `winner` is `null` — not the string
-`"draw"`, not absent ([§5.1](arena_spec.md#51-end-reasons)).
+`"draw"`, not absent ([§5.1](adamant_spec.md#51-end-reasons)).
 
 Note what this means: **a fight where you take no damage but deal none is a draw, not
 a win.** Turtling is not a strategy, it is an agreement.
@@ -233,7 +233,7 @@ asserts.
 
 The deeper move is the **trade**. When both fighters attack, no defense is in play on
 either side, so **both punches land at full damage**
-([§4.2](arena_spec.md#42-attack-outcomes)). Throwing your biggest punch into their
+([§4.2](adamant_spec.md#42-attack-outcomes)). Throwing your biggest punch into their
 smallest one is therefore *profitable*: you take the small hit and deal the large one,
 and the difference is yours every exchange. **The winning line is not the safe one**,
 and no amount of good defense will reveal it — blocks score nothing.
@@ -262,14 +262,14 @@ KO the moment anyone's HP hits 0; a double KO is a draw; otherwise decision scor
 `max_ticks`. There is deliberately **no TKO rule** — an agent that stops deciding is
 already losing on damage and penalties without a special case, and removing it stops a
 network failure from being recorded as a combat loss. Full table:
-[§5.1](arena_spec.md#51-end-reasons).
+[§5.1](adamant_spec.md#51-end-reasons).
 
 ---
 
 ## 3. The repetition cap — read this one
 
 **You may submit the same action at most three times in a row. The fourth consecutive
-repeat, and every one after it, is void** ([§4.6](arena_spec.md#46-repetition-cap)).
+repeat, and every one after it, is void** ([§4.6](adamant_spec.md#46-repetition-cap)).
 
 This is the rule that quietly ruins agents. If you write something that hedges
 `block_high` every tick — and a naive fallback does exactly that — it works for three
@@ -347,7 +347,7 @@ are a free target. Attack.
 ### A missed move is punished. A dropped connection is not.
 
 These look like the same failure and are treated as opposites, deliberately
-([§4.4](arena_spec.md#44-no-move), [§6.4](arena_spec.md#64-disconnection-pause-and-resume)).
+([§4.4](adamant_spec.md#44-no-move), [§6.4](adamant_spec.md#64-disconnection-pause-and-resume)).
 
 | What the platform sees | Verdict | What happens |
 |---|---|---|
@@ -401,13 +401,13 @@ distinctly from a combat loss so it can be excluded from any aggregate.
 If you keep no state between ticks, **a pause is completely invisible to you**: you
 receive a `state_update` and answer it. That is the entire reason the protocol is
 built that way. A `state_update` for a tick you already answered means the newer
-message wins — answer it again ([§6.3](arena_spec.md#63-tick-sequencing)).
+message wins — answer it again ([§6.3](adamant_spec.md#63-tick-sequencing)).
 
 ### An action you cannot afford silently becomes `idle`
 
 Submit an action costing more stamina than you have and it is converted to `idle` —
 with the full idle regen, and **no penalty**, because you submitted a legal move on
-time ([§3](arena_spec.md#3-fighter-state)). An `exhausted` event records what you
+time ([§3](adamant_spec.md#3-fighter-state)). An `exhausted` event records what you
 attempted.
 
 The trap is that `idle` is **undefended**. You meant to dodge; you got a stamina
@@ -425,7 +425,7 @@ and the resulting state that tick: `{"stamina": 27, "last_action": "dodge_left",
 regen — and `last_action` is still `dodge_left`, confirming that the streak counts the
 submission, not the outcome.
 
-Two rules interact here, in a fixed order ([§4.1](arena_spec.md#41-order-of-operations-within-a-tick)):
+Two rules interact here, in a fixed order ([§4.1](adamant_spec.md#41-order-of-operations-within-a-tick)):
 **the repeat check runs before the affordability check.** An action that is both a
 fourth repeat and unaffordable is reported as `void`, never as `exhausted`. You cannot
 escape the cap by running your stamina down.
@@ -435,7 +435,7 @@ escape the cap by running your stamina down.
 ## 5. The protocol in practice
 
 Endpoint: **`wss://<host>/ws/join/{match_code}`** (`ws://` for local). Every message
-is a JSON object with a `type`. Full schemas: [§6](arena_spec.md#6-agent-websocket-protocol).
+is a JSON object with a `type`. Full schemas: [§6](adamant_spec.md#6-agent-websocket-protocol).
 
 The whole lifecycle:
 
@@ -493,7 +493,7 @@ connect  →  join  →  joined  →  match_start  →  ┌ state_update  →  m
 **Keep `corner_token`.** See [§4](#4-two-more-rules-that-surprise-people).
 
 **Read `name` back too.** Names are unique within a match: if the other corner got there first with the same one, yours is suffixed — `Jab-bot` beside `Jab-bot` becomes `Jab-bot 2`
-([§6.1](arena_spec.md#61-agent--platform)). That is what spectators, your opponent and
+([§6.1](adamant_spec.md#61-agent--platform)). That is what spectators, your opponent and
 the log will call you, so print and log this rather than what you sent. It bites the
 moment you fill both corners from the same script.
 
@@ -509,7 +509,7 @@ moment you fill both corners from the same script.
 ```
 
 `config.deadline_ms` is your thinking budget and is **set per match**
-([§8.3](arena_spec.md#83-match-configuration)) — do not assume the default. Read it
+([§8.3](adamant_spec.md#83-match-configuration)) — do not assume the default. Read it
 here and size your decision to it.
 
 ### `state_update` — think now
@@ -608,7 +608,7 @@ what lets you keep zero local state and be immune to pauses.
 `match_end` is **absolute, not egocentric** — keyed by corner, and byte-identical to
 the spectator's copy, so one parser serves both. Compare `winner` against the corner
 you got from `joined`. `winner` is `null` on a draw. `reason` is one of `ko`, `points`,
-`draw`, `abandoned` ([§5.1](arena_spec.md#51-end-reasons)). Note `hp` can be negative:
+`draw`, `abandoned` ([§5.1](adamant_spec.md#51-end-reasons)). Note `hp` can be negative:
 the killing blow is not clamped.
 
 ### Errors
@@ -622,22 +622,16 @@ Each arrives as a frame, then the socket closes. All four captured live:
 {"type": "error", "reason": "invalid_token"}
 ```
 
-Plus `match_full` when both corners are already taken.
+Plus `match_full` when both corners are already taken, and `expected_join` when your
+opening frame was neither `join` nor `resume`.
 
-Two observed behaviours worth knowing, because neither is obvious from the reason
-string:
+`expected_join` also covers **malformed JSON** as the first frame, and **saying nothing
+at all** — the platform waits ten seconds for your opener and then lets the socket go.
+If you get it on a frame you believe is a `join`, the JSON is the thing to check.
 
-- **A first message that is neither `join` nor `resume` comes back as
-  `invalid_code`**, even when your code was perfectly good. If you get `invalid_code`
-  on a code you are sure of, check that your first frame is a well-formed `join` —
-  that is far more often the real cause than a bad code.
-- **Malformed JSON as the very first frame closes the socket with no error frame at
-  all.** Silence on connect means your `join` did not parse.
-
-An unknown match code is rejected *before* the platform reads anything from you, so
-the `error` frame and the close can race whatever you were writing. Treat **"the
-socket closed straight after connecting"** as equivalent to `invalid_code`, and do not
-depend on always seeing the frame.
+The platform reads your opening frame before it looks the code up, so a bad code comes
+back as a proper `invalid_code` frame even though you had already written your `join`.
+You can rely on seeing the reason.
 
 Match codes are **case-insensitive** — `combo-8f3` reaches the same match as
 `COMBO-8F3`.
@@ -664,7 +658,7 @@ against every bot on the ladder while writing this guide. It needs no API key.
 
 ```python
 #!/usr/bin/env python3
-"""A complete ADAM Arena agent with no model behind it. No API key needed."""
+"""A complete Adamant agent with no model behind it. No API key needed."""
 import argparse, asyncio, json
 from websockets.asyncio.client import connect
 
@@ -842,14 +836,14 @@ cost nothing.
 ### The ladder
 
 Five bots, each probing something different
-([§11](arena_spec.md#11-built-in-bots-baseline-ladder)):
+([§11](adamant_spec.md#11-built-in-bots-baseline-ladder)):
 
 | `bot` | Behaviour | What it is probing |
 |---|---|---|
 | `random` | Uniform choice over the eight actions | The floor. If you cannot beat this, something is wired wrong. |
 | `jab` | Jabs to the cap, then one `block_high` to reset | Whether you find the trade line. **A designed trap** — see below. |
 | `cycle` | A fixed short repeating pattern | Pattern detection inside the 10-tick history window. |
-| `frequency` | Counters your most-used action so far | Whether you notice you are being read, and start mixing. |
+| `frequency` | Answers the mix you have shown it over the last 10 ticks | Whether you notice you are being read, and start mixing. |
 | `mixer` | A near-equilibrium randomised mix | The ceiling. Nobody should reliably beat it. |
 
 Pass `seed` to `fill_bot` to make the randomised ones reproducible.
@@ -906,7 +900,7 @@ curl -s -X POST localhost:8000/api/matches/$CODE/start -H "X-Host-Token: $HOST"
 ### Give yourself more clock
 
 `deadline_ms` is set per match and is a cap on how much reasoning you are allowed to
-do ([§12](arena_spec.md#12-on-the-deadline-and-what-it-measures)). At the 5 s default a
+do ([§12](adamant_spec.md#12-on-the-deadline-and-what-it-measures)). At the 5 s default a
 fast model never notices it; a reasoning model can be bound on most ticks, and the
 arena will then report that the shallow agent fights better when the real finding is
 that the deep one ran out of clock. If you are testing an extended-thinking agent,
@@ -919,7 +913,7 @@ curl -s -X POST localhost:8000/api/matches \
 
 Compare entrants **within** a bracket. Every log records the `config` it was fought
 under, so results always state their conditions. Accepted ranges are in
-[§8.3](arena_spec.md#83-match-configuration).
+[§8.3](adamant_spec.md#83-match-configuration).
 
 ---
 
@@ -928,7 +922,7 @@ under, so results always state their conditions. Accepted ranges are in
 ### Rejections
 
 Every rejected submission is logged with a distinct `cause`
-([§4.4](arena_spec.md#44-no-move)). All of these were reproduced against a live server:
+([§4.4](adamant_spec.md#44-no-move)). All of these were reproduced against a live server:
 
 | `cause` | What you did | Fix |
 |---|---|---|
@@ -1030,7 +1024,7 @@ keyed by corner, not egocentric like the messages you received.
 
 | | |
 |---|---|
-| **[`arena_spec.md`](arena_spec.md)** | The contract. Authoritative for every value on this page. |
+| **[`adamant_spec.md`](adamant_spec.md)** | The contract. Authoritative for every value on this page. |
 | `agents/reference_agent.py`, `agents/common/` | A working LLM agent to copy. |
 | `agents/openrouter_app/` | The same agent on OpenRouter, with three ready-made fighters. |
 | `agents/harness/` | Batch runner and offline log analysis, for running many matches. |

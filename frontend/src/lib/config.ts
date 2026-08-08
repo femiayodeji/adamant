@@ -10,7 +10,7 @@
  *   2. NEXT_PUBLIC_API_BASE at build time.
  */
 
-const STORAGE_KEY = 'adam-arena:api-base';
+const STORAGE_KEY = 'adamant:api-base';
 
 let cached: string | null = null;
 

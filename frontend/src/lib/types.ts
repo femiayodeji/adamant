@@ -1,5 +1,5 @@
 /**
- * Wire types for ADAM Arena, transcribed from docs/arena_spec.md 6-8.
+ * Wire types for Adamant, transcribed from docs/adamant_spec.md 6-8.
  *
  * Spectator-facing messages and the log are ABSOLUTE (`agent_a` / `agent_b`) —
  * the frontend never speaks the egocentric agent vocabulary (spec 1.1).
@@ -147,7 +147,7 @@ export interface TickResult {
   /** Action submitted per corner, `null` on a no-move. A voided or exhausted action is
    *  still reported as submitted, so a renderer must check events before animating
    *  (spec §7). */
-  moves: Partial<Record<Corner, string>>;
+  moves: Partial<Record<Corner, string | null>>;
   events: ArenaEvent[];
   state: Record<Corner, FighterState>;
   telemetry?: Partial<Record<Corner, TickTelemetry>>;
@@ -176,13 +176,20 @@ export interface MatchEnd {
   final_state: Record<Corner, FighterState>;
 }
 
+/** Sent alone, immediately before the socket closes — `invalid_code` for a watcher. */
+export interface ErrorFrame {
+  type: 'error';
+  reason: string;
+}
+
 export type SpectatorMessage =
   | LobbyUpdate
   | SpectatorMatchStart
   | TickResult
   | MatchPaused
   | MatchResumed
-  | MatchEnd;
+  | MatchEnd
+  | ErrorFrame;
 
 /* ------------------------------------------------------------- REST (8) */
 

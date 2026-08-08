@@ -1,5 +1,5 @@
 /**
- * The ADAM Arena mark.
+ * The Adamant mark.
  *
  * The ring is the arena seen from above, the two nodes inside it are the corners,
  * and the hairline seam between them is the tick boundary they resolve across —

@@ -1,8 +1,8 @@
 {
-  "name": "adam-arena-frontend",
+  "name": "adamant",
   "version": "0.1.0",
   "private": true,
-  "description": "ADAM Arena SPA \u2014 Home / Lobby / Arena, static-exported for FastAPI to serve.",
+  "description": "Adamant SPA \u2014 Home / Lobby / Arena, static-exported for FastAPI to serve.",
   "scripts": {
     "predev": "node tools/fetch-rig.mjs",
     "dev": "next dev",

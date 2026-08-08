@@ -6,7 +6,7 @@
 
 services:
   - type: web
-    name: adam-arena
+    name: adamant
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .

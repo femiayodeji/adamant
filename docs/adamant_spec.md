@@ -1,4 +1,4 @@
-# ADAM Arena — Combat Protocol & Rules Spec (MVP v0.7)
+# Adamant — Combat Protocol & Rules Spec (MVP v0.7)
 
 A hosted platform where two LLM agents fight under boxing-style rules. The platform owns the rig, animations, rules engine, and referee logic. Agents own only their decision-making (model + prompt + logic).
 
@@ -154,12 +154,14 @@ A fighter has made a **no-move** for tick *N* when, by the deadline, the platfor
 | `timeout` | Connection open, nothing arrived before the deadline |
 | `malformed` | Not valid JSON, or not a `move` message |
 | `invalid_action` | Action name not in the eight of §2 |
-| `wrong_tick` | `tick` field does not match the current tick |
+| `wrong_tick` | `tick` field names a tick **ahead** of the current one |
 | `duplicate` | A move for this tick was already accepted (the first is kept) |
 
 **A rejected submission does not immediately lock in a no-move.** The agent keeps the remainder of its deadline to send something valid, and only if nothing valid ever arrives does the tick become a no-move — carrying the *last* rejection reason rather than `timeout`, because "the agent cannot follow the output format" and "the agent was slow" are different findings about an agent. An agent that sends `{"action": "punch"}` and then corrects itself to `jab` within the deadline has thrown a jab and is not penalised.
 
 `duplicate` is therefore the one reason that never appears as a no-move cause: a duplicate exists only when a valid move was already accepted, so by definition that tick is not a no-move. The duplicate is discarded, the first move stands, and no penalty applies.
+
+**A move for a tick that has already resolved is discarded the same way, and is not `wrong_tick`.** A slow agent's overdue answer to tick *N* arrives during tick *N+1*: it is a late answer to a closed question, not a claim about the tick now open. Scoring it as `wrong_tick` made every no-move after an agent's first one report a protocol error rather than a timeout — which is precisely the confusion the causes are separated to avoid, since "this agent is slow" and "this agent cannot echo a tick number" are different findings. `wrong_tick` therefore means a tick **ahead** of the current one, which no correct client can produce.
 
 A no-move resolves as follows:
 
@@ -360,7 +362,9 @@ All messages are JSON with a `type` field.
 
 Errors, each followed by close: `{"type":"error","reason":"invalid_code" | "expected_join" | "match_full" | "profile_required" | "invalid_name" | "invalid_token"}`.
 
-`expected_join` means the first frame on the socket was neither `join` nor `resume`. It is distinct from `invalid_code` deliberately: the code resolved fine and reporting it as invalid sends a builder hunting the one thing that is not wrong.
+`expected_join` means the opening frame was neither `join` nor `resume` — including unparseable JSON, and including nothing at all within 10 seconds of connecting, after which the socket is released. It is distinct from `invalid_code` deliberately: the code resolved fine and reporting it as invalid sends a builder hunting the one thing that is not wrong.
+
+**The platform reads the opening frame before it resolves the code**, so `invalid_code` reliably reaches a client that wrote its `join` the instant the socket opened — which is every real client. Closing a socket while the client's frame sits unread discards whatever was written to it, so resolving the code first meant a mistyped code closed the connection in silence and gave the builder nothing to go on.
 
 **`match_start`** — sent when the host starts the fight.
 
@@ -449,7 +453,7 @@ Infrastructure failure must not decide a fight. It also must not advantage eithe
 
 **b. Pause and resume.** On a corner's socket closing mid-match:
 
-1. The platform sends `{"type": "match_paused", "tick": 12, "missing": "agent_b", "resume_window_ms": 120000}` to the **remaining agent and all spectators**, and stops the deadline clock for **both** corners.
+1. The platform sends `{"type": "match_paused", "tick": 12, "missing": "agent_b", "resume_window_ms": 120000}` to the **remaining agent and all spectators**, and stops the deadline clock for **both** corners. One frame per missing corner, so both dropping sends two.
 2. The disconnected builder reconnects to `/ws/join/{match_code}` and sends `resume` with the `corner_token` from `joined`. A bad or unknown token → `{"type":"error","reason":"invalid_token"}`. On success the platform replies `joined`, then **re-sends `match_start`** — a resuming agent is often a freshly restarted process that never saw the original, and it cannot budget its thinking time without `config.deadline_ms`.
 3. On success the platform sends `match_resumed`, then **re-issues the same `state_update` for the same tick** to both agents with a full fresh deadline. The tick number does not advance and no penalty is applied.
 4. Any move already submitted for that tick by the connected agent is **discarded**; both agents answer the re-issued tick.
@@ -524,7 +528,9 @@ Renderers therefore cannot read `moves` alone. A `null` has no clip. A voided ac
 
 `telemetry` is echoed for the HUD and the log; `reason` and token counts are **stripped from the live spectator stream** (they remain in the log) so that in-flight reasoning is never visible to a watching opponent.
 
-**`match_paused`** / **`match_resumed`** — as in §6.4.
+**`match_paused`** / **`match_resumed`** — as in §6.4. A watch link has to work at any moment in a match, so a spectator joining is first brought up to date: `match_start`, then every `tick_result` so far, then `match_end` if the match is over — **or `match_paused` if it is currently paused**, one frame per missing corner, carrying the part of `resume_window_ms` still to run rather than the configured total. Without that replay a spectator who arrives during a pause, or whose own socket blipped through one, watches a frozen arena with nothing to explain it, because `match_paused` is broadcast once and never again.
+
+Because every connection replays the match from tick 1, a client must ignore a `tick_result` for a tick it has already processed. Ticks are 1-indexed and monotonic (§5), so a high-water mark is the whole rule — without one a reconnect is a second telling of a fight already on screen.
 
 **`match_end`** — byte-identical to §6.2.
 
@@ -730,10 +736,12 @@ Bots connect through the **same public WebSocket protocol** as external agents �
 | `random` | Uniform choice over the eight actions | Floor |
 | `jab` | `jab` to the repetition cap, then one `block_high` to reset the streak | Whether the agent finds the trade line (see below) |
 | `cycle` | Fixed period-3 or period-5 pattern | Pattern detection inside the 10-tick history window |
-| `frequency` | Counters the opponent's most-used action so far | Whether the agent notices it is being read, and mixes |
+| `frequency` | Answers the opponent's action distribution over the history window | Whether the agent notices it is being read, and mixes |
 | `mixer` | Near-equilibrium randomised mix | Ceiling — nobody should reliably beat it |
 
 The ladder, not model-vs-model play, is the measuring instrument. This game is at heart a resource-constrained simultaneous matrix game: two agents both playing near-equilibrium score alike regardless of how strong they are, so discrimination comes almost entirely from **exploiting a non-equilibrium opponent**. Model-vs-model matches are the demo; the ladder is the evaluation.
+
+**`frequency` reads the whole distribution, not the single most-used action.** It counts the opponent's attacks and defenses in separate pools over the ten ticks it can see, guards while attacks are at least as frequent as guards, and plays the answer covering the most of the larger pool. A plurality would be the obvious implementation and is the wrong one: ten ticks is short enough that against any short-period opponent the leading count is decided by whichever action happens to sit at the edge of the window, and it rotates as the window slides. Against a `jab block_high cross` cycle that flipped the bot from correctly dodging every punch to standing up and throwing `hook` on a fixed cadence at exactly the tick the opening `jab` fell out of the window — with nothing about the opponent having changed. The bot is meant to be exploitable *because it reads*; a window artefact is not a read.
 
 **Every ladder bot is repeat-aware** (§4.6): each one checks `self.repeat_streak` and inserts a streak-resetting move rather than submitting an action it knows will be voided. This is not a privileged path — it reads the same `state_update` fields any external agent gets. It is necessary because a bot that voided out would stop probing the thing it exists to probe, and the ladder is the measuring instrument.
 

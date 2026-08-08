@@ -1,7 +1,7 @@
 /**
  * Offline fixture driver — `?demo=1`.
  *
- * Fakes the spectator stream of arena_spec.md 7: it emits the same `lobby_update` /
+ * Fakes the spectator stream of adamant_spec.md 7: it emits the same `lobby_update` /
  * `match_start` / `tick_result` / `match_paused` / `match_end` messages, through the
  * same reducer and the same renderer, and records them into a match log so Replay
  * works offline too. Entered from `page.tsx` via `?demo=1`; the live path is
@@ -68,7 +68,9 @@ function lcg(seed: number): () => number {
 interface Resolution {
   events: ArenaEvent[];
   state: Record<Corner, FighterState>;
-  moves: Record<Corner, string>;
+  /** What was SUBMITTED, which is what the wire carries — `null` on a no-move, and
+   *  still the unaffordable action on an `exhausted` tick. Never the resolution. */
+  moves: Record<Corner, string | null>;
   ko: boolean;
 }
 
@@ -82,17 +84,20 @@ function resolveTick(
     agent_b: { ...state.agent_b },
   };
   const events: ArenaEvent[] = [];
-  const moves: Record<Corner, string> = { agent_a: 'idle', agent_b: 'idle' };
-  const noMove: Record<Corner, boolean> = { agent_a: false, agent_b: false };
-  const voided: Record<Corner, boolean> = { agent_a: false, agent_b: false };
+  const moves: Record<Corner, string | null> = { agent_a: null, agent_b: null };
+  /** What actually resolves: `null` for a no-move or a voided repeat, `idle` for an
+   *  action the fighter could not afford. Kept apart from `moves` because the wire
+   *  reports the submission and the events report the resolution, and a renderer has
+   *  to check the events before animating — the whole point of the `exhausted` and
+   *  `void` events is that they disagree with `moves`. */
+  const effective: Record<Corner, string | null> = { agent_a: null, agent_b: null };
+  const spend: Record<Corner, number> = { agent_a: 0, agent_b: 0 };
   const corners: Corner[] = ['agent_a', 'agent_b'];
 
   for (const corner of corners) {
     const intent = intents[corner];
     if (intent === null) {
       // A no-move breaks the streak: last_action -> null, repeat_streak -> 0 (4.6).
-      noMove[corner] = true;
-      moves[corner] = 'no_move';
       next[corner].penalties += 15;
       next[corner].last_action = null;
       next[corner].repeat_streak = 0;
@@ -110,7 +115,8 @@ function resolveTick(
 
     if (streak > MAX_CONSECUTIVE_REPEATS) {
       // Void is checked BEFORE affordability, so a void never also emits exhausted.
-      voided[corner] = true;
+      // It still pays, capped at what is left (4.6): spam costs stamina.
+      spend[corner] = Math.min(cost(intent), state[corner].stamina);
       events.push({ type: 'void', who: corner, action: intent, streak });
       continue;
     }
@@ -121,48 +127,40 @@ function resolveTick(
         attempted: intent,
         stamina: state[corner].stamina,
       });
-      moves[corner] = 'idle';
+      effective[corner] = 'idle';
       continue;
     }
+    effective[corner] = intent;
+    spend[corner] = cost(intent);
   }
 
   for (const corner of corners) {
-    // A voided move still pays, capped at what is left (4.6): spam costs stamina.
-    const spend = voided[corner]
-      ? Math.min(cost(moves[corner]), state[corner].stamina)
-      : cost(moves[corner]);
-    next[corner].stamina -= spend;
+    next[corner].stamina -= spend[corner];
   }
 
   for (const attacker of corners) {
     const defender: Corner = attacker === 'agent_a' ? 'agent_b' : 'agent_a';
-    const action = moves[attacker];
-    const attack = ATTACKS[action];
-    if (!attack || noMove[attacker] || voided[attacker]) continue;
+    const action = effective[attacker];
+    const attack = action ? ATTACKS[action] : undefined;
+    if (!attack || !action) continue;
 
-    // A voided fighter is defenceless for the tick — its action negates nothing.
-    const defense =
-      noMove[defender] || voided[defender] ? null : DEFENSES[moves[defender]];
-    if (defense && defense.counters.includes(action)) {
+    // A voided or silent fighter is defenceless — `effective` is null for both.
+    const guard = effective[defender];
+    const defense = guard ? DEFENSES[guard] : null;
+    if (defense && guard && defense.counters.includes(action)) {
       if (defense.riposte > 0) {
         events.push({
           type: 'dodged',
           attacker,
           defender,
           action,
-          defense: moves[defender],
+          defense: guard,
           riposte: defense.riposte,
         });
         next[attacker].hp -= defense.riposte;
         next[defender].points += defense.riposte;
       } else {
-        events.push({
-          type: 'blocked',
-          attacker,
-          defender,
-          action,
-          defense: moves[defender],
-        });
+        events.push({ type: 'blocked', attacker, defender, action, defense: guard });
       }
       continue;
     }
@@ -173,14 +171,17 @@ function resolveTick(
 
   for (const corner of corners) {
     // A voided idle gets no idle bonus — passive regen only (4.6).
-    const regen = noMove[corner] || voided[corner] ? 5 : moves[corner] === 'idle' ? 20 : 5;
+    const regen = effective[corner] === 'idle' ? 20 : 5;
     next[corner].stamina = Math.min(100, Math.max(0, next[corner].stamina + regen));
   }
 
   let ko = false;
   for (const corner of corners) {
+    // HP has no floor: the killing blow lands in full, so a final state reads -5 and
+    // not 0 (spec 7). Clamping here made the demo the one place in the app where a
+    // negative HP could not occur, which is why nothing downstream was ever exercised
+    // against one.
     if (next[corner].hp <= 0) {
-      next[corner].hp = 0;
       events.push({ type: 'ko', who: corner });
       ko = true;
     }
@@ -200,6 +201,10 @@ export interface DemoHandle {
 }
 
 export const DEMO_CODE = 'DEMO-000';
+
+/** The demo's own tick limit. Announced as `max_ticks` so the HUD's tick box counts
+ *  towards the tick the fixture actually stops on. */
+const DEMO_MAX_TICKS = 24;
 
 const AGENTS = {
   agent_a: {
@@ -225,7 +230,7 @@ export function startDemo(options: DemoOptions): DemoHandle {
   const timers: ReturnType<typeof setTimeout>[] = [];
   const after = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
 
-  const config = { max_ticks: 60, deadline_ms: 5000, resume_window_ms: 120000 };
+  const config = { max_ticks: DEMO_MAX_TICKS, deadline_ms: 5000, resume_window_ms: 120000 };
   const ticks: TickResult[] = [];
   let end: MatchEnd | null = null;
   let stopped = false;
@@ -263,7 +268,7 @@ export function startDemo(options: DemoOptions): DemoHandle {
   const random = lcg(20260806);
   let state: Record<Corner, FighterState> = { agent_a: fresh(), agent_b: fresh() };
   let tick = 0;
-  let historyB: string[] = [];
+  let historyB: (string | null)[] = [];
 
   /** Would submitting `action` void for `corner` right now (spec 4.6)? */
   function wouldVoid(corner: Corner, action: string): boolean {
@@ -307,7 +312,7 @@ export function startDemo(options: DemoOptions): DemoHandle {
     const intents = { agent_a: decideA(), agent_b: decideB() };
     const result = resolveTick(state, intents);
     state = result.state;
-    historyB.push(result.moves.agent_b);
+    historyB.push(result.moves.agent_b ?? null);
 
     const tickResult: TickResult = {
       type: 'tick_result',
@@ -323,7 +328,7 @@ export function startDemo(options: DemoOptions): DemoHandle {
     ticks.push(tickResult);
     send(tickResult);
 
-    if (result.ko || tick >= 24) {
+    if (result.ko || tick >= DEMO_MAX_TICKS) {
       const winner: Corner | null = result.ko
         ? state.agent_a.hp <= 0
           ? state.agent_b.hp <= 0
@@ -338,7 +343,10 @@ export function startDemo(options: DemoOptions): DemoHandle {
       end = {
         type: 'match_end',
         winner,
-        reason: result.ko ? 'ko' : 'points',
+        // `winner: null` is always `draw` — a double KO and a points tie both end
+        // there (spec 5.1). `by ko` with nobody named is a combination the server
+        // cannot produce.
+        reason: winner === null ? 'draw' : result.ko ? 'ko' : 'points',
         final_tick: tick,
         final_state: state,
       };

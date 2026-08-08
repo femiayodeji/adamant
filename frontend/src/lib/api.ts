@@ -1,4 +1,4 @@
-/** REST client for the platform API (docs/arena_spec.md 8). */
+/** REST client for the platform API (docs/adamant_spec.md 8). */
 
 import { apiUrl } from './config';
 import type {
@@ -137,7 +137,7 @@ interface HostSession {
   host_token: string;
 }
 
-const hostKey = (code: string) => `adam-arena:host:${code.toUpperCase()}`;
+const hostKey = (code: string) => `adamant:host:${code.toUpperCase()}`;
 
 export function rememberHost(session: HostSession): void {
   try {

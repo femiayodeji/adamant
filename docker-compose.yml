@@ -8,8 +8,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: adam-arena:latest
-    container_name: adam-arena
+    image: adamant:latest
+    container_name: adamant
     ports:
       - "${ARENA_PORT:-8000}:8000"
     environment:

@@ -268,7 +268,7 @@ export function paintOverlay(
   ctx.font = mono(12, '600');
   ctx.fillStyle = 'rgba(232, 242, 248, 0.38)';
   ctx.fillText(
-    data.code ? `ADAM ARENA · ${data.code}` : 'ADAM ARENA',
+    data.code ? `ADAMANT · ${data.code}` : 'ADAMANT',
     width - margin,
     height - margin,
   );
@@ -279,20 +279,29 @@ export function paintOverlay(
     ctx.textAlign = 'center';
     ctx.fillStyle = INK;
     ctx.font = `800 46px ui-sans-serif, system-ui, sans-serif`;
+    // `winner: null` is a draw, a points tie *and* an abandoned match. In a burnt-in
+    // video the reason line is the only correction available, and it is 18px grey
+    // under a 46px headline — so the headline has to be right on its own.
+    const abandoned = data.end.reason === 'abandoned';
+    const winner = data.end.winner;
     ctx.fillText(
-      data.end.winner ? `${data.names[data.end.winner]} wins`.toUpperCase() : 'DRAW',
+      winner
+        ? `${data.names[winner]} wins${abandoned ? ' by default' : ''}`.toUpperCase()
+        : abandoned
+          ? 'ABANDONED'
+          : 'DRAW',
       width / 2,
       height / 2 - 16,
     );
     ctx.font = mono(18);
     ctx.fillStyle = DIM;
-    const a = data.end.final_state.agent_a;
-    const b = data.end.final_state.agent_b;
-    ctx.fillText(
-      `by ${data.end.reason} · tick ${data.end.final_tick} · ` +
-        `${a.points - a.penalties} — ${b.points - b.penalties} decision score`,
-      width / 2,
-      height / 2 + 28,
-    );
+    let line = `by ${data.end.reason} · tick ${data.end.final_tick}`;
+    const final = data.end.final_state;
+    if (final) {
+      const a = final.agent_a;
+      const b = final.agent_b;
+      line += ` · ${a.points - a.penalties} — ${b.points - b.penalties} decision score`;
+    }
+    ctx.fillText(line, width / 2, height / 2 + 28);
   }
 }

@@ -50,7 +50,7 @@ const END_CARD_MS = 1800;
 
 /** Where the sound preference is remembered. Per browser, not per match: a viewer
  *  who muted the last fight should not have to mute the next one. */
-const SOUND_KEY = 'adam-arena.sound';
+const SOUND_KEY = 'adamant.sound';
 
 interface LogRow {
   tick: number;
@@ -466,7 +466,7 @@ export function Arena({
           setReplayError('The recording came back empty.');
           return;
         }
-        saveBlob(blob, `${code ?? 'adam-arena'}-replay.${capture.format.ext}`);
+        saveBlob(blob, `${code ?? 'adamant'}-replay.${capture.format.ext}`);
         const size = `Saved ${(blob.size / 1e6).toFixed(1)} MB`;
         const track = sounded ? ' with sound' : ', silent — this browser has no Web Audio';
         setVideoNote(
@@ -545,7 +545,10 @@ export function Arena({
    *  see where on the timeline the picture is. */
   const currentTick = hud?.tick ?? -1;
   const showEnd = view.phase === 'ended' && drained && !replaying && view.end;
-  const canReplay = view.phase === 'ended' || demo;
+  /** Only once the fight is over. In demo mode the log is the same array the demo is
+   *  still pushing to, so replaying a running demo drives the renderer from two
+   *  sources at once and the transport's total goes stale under the slider. */
+  const canReplay = view.phase === 'ended';
   /** Host-only, and only once there is a fought match to run back (spec 8.4 rejects
    *  a rematch of anything unfinished). Independent of the replay transport. */
   const canRematch = Boolean(hostToken) && !demo && view.phase === 'ended';
@@ -630,16 +633,16 @@ export function Arena({
           {showEnd && view.end && (
             <div className="overlay">
               <div className="box">
-                <div className="title">
-                  {view.end.winner ? `${names[view.end.winner]} wins` : 'Draw'}
-                </div>
+                <div className="title">{headline(view.end, names)}</div>
                 <div className="row" style={{ justifyContent: 'center' }}>
                   <span className="chip">by {view.end.reason}</span>
                   <span className="chip">tick {view.end.final_tick}</span>
-                  <span className="chip">
-                    {score(view.end.final_state.agent_a)} — {score(view.end.final_state.agent_b)}{' '}
-                    decision score
-                  </span>
+                  {view.end.final_state && (
+                    <span className="chip">
+                      {score(view.end.final_state.agent_a)} —{' '}
+                      {score(view.end.final_state.agent_b)} decision score
+                    </span>
+                  )}
                 </div>
                 <div className="row" style={{ justifyContent: 'center' }}>
                   <button className="primary big" onClick={startReplay}>
@@ -1054,7 +1057,10 @@ function PausedOverlay({ view }: { view: MatchView }) {
       250,
     );
     return () => clearInterval(id);
-  }, [paused.resume_window_ms, paused.tick, paused.missing]);
+    // Deliberately not keyed on `missing`: both corners dropping sends one
+    // `match_paused` each (spec 6.4), and restarting the clock on the second would
+    // show a window longer than the one actually running.
+  }, [paused.resume_window_ms, paused.tick]);
 
   return (
     <div className="overlay">
@@ -1130,3 +1136,15 @@ function EventLine({
 
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
 const score = (state: FighterState) => state.points - state.penalties;
+
+/**
+ * The result banner's headline. `winner: null` covers three different endings, and
+ * calling an abandoned match a draw hides the one distinction the log exists to keep:
+ * infrastructure failure is not a combat result (spec 5.1).
+ */
+function headline(end: MatchEnd, names: Record<Corner, string>): string {
+  if (end.reason === 'abandoned') {
+    return end.winner ? `${names[end.winner]} wins by default` : 'Abandoned';
+  }
+  return end.winner ? `${names[end.winner]} wins` : 'Draw';
+}

@@ -1,7 +1,7 @@
 /**
  * One corner: a rig instance, its mixer, its preloaded clip set, and its clip queue.
  *
- * The clip queue is the answer to arena_spec.md 13: ticks resolve as soon as both
+ * The clip queue is the answer to adamant_spec.md 13: ticks resolve as soon as both
  * moves arrive, which can be far faster than a 0.5 s clip plays. Clips are never
  * dropped mid-play and never blended from an arbitrary pose — every clip starts
  * and ends at STANCE (docs/skeleton.md), so back-to-back playback is continuous

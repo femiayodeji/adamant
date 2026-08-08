@@ -47,6 +47,35 @@ async def test_a_closed_socket_pauses_the_match_rather_than_resolving_the_tick(a
     await spectator.close()
 
 
+async def test_a_spectator_arriving_mid_pause_is_told_the_match_is_paused(arena):
+    """`match_paused` is broadcast once, when the corner drops, and never again.
+
+    Anyone who opens the watch link during the pause — or whose own socket blipped
+    through it — would otherwise be shown a frozen arena with no overlay and no
+    explanation, because the catch-up replays the ticks and the result but said
+    nothing about the pause. The window it reports is the part still to run, not the
+    configured total, or the countdown on screen outlives the real one.
+    """
+    created, a, b, first = await _running_match(arena, deadline_ms=500, max_ticks=5)
+    await a.expect("state_update")
+    await b.expect("state_update")
+
+    await b.close()
+    await first.expect("match_paused", timeout=5)
+    await asyncio.sleep(0.5)
+
+    late = await Spectator.connect(arena, created["match_code"])
+    paused = await late.expect("match_paused", timeout=5)
+
+    assert paused["missing"] == "agent_b"
+    assert paused["tick"] == 1, "the tick that is waiting to be re-issued"
+    assert 0 < paused["resume_window_ms"] < 120000, paused["resume_window_ms"]
+
+    await a.close()
+    await first.close()
+    await late.close()
+
+
 async def test_resume_reissues_the_same_tick_with_a_fresh_deadline_and_no_penalty(arena):
     created, a, b, spectator = await _running_match(arena, deadline_ms=500, max_ticks=3)
     await a.expect("state_update")

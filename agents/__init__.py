@@ -1,4 +1,4 @@
-"""Agent-side artifacts for ADAM Arena.
+"""Agent-side artifacts for Adamant.
 
 ``reference_agent.py``  the published example (direct Anthropic SDK)
 ``common/``              rules summary, prompt, decision loop, WebSocket loop

@@ -238,7 +238,7 @@ def published_figures(max_ticks: int = rules.DEFAULT_MAX_TICKS) -> dict[str, Sim
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ADAM Arena balance simulation")
+    parser = argparse.ArgumentParser(description="Adamant balance simulation")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-ticks", type=int, default=rules.DEFAULT_MAX_TICKS)
     args = parser.parse_args()

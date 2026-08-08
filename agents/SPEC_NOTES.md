@@ -1,7 +1,7 @@
 # Spec notes from building the agents
 
 Open gaps found while writing `agents/reference_agent.py` and `agents/harness/`
-against `docs/arena_spec.md`. The reference agent doubles as a check that the spec
+against `docs/adamant_spec.md`. The reference agent doubles as a check that the spec
 alone is sufficient; it mostly is. These are the places where I still have to make
 a decision the spec does not make for me — **proposals for whoever owns the spec**,
 not edits to it.

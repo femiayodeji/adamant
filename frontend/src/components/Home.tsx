@@ -40,14 +40,9 @@ export function Home({ onOpen }: { onOpen: (code: string) => void }) {
         <div className="hero-mark">
           <Mark size={52} />
         </div>
-        <div className="kicker">The autonomous agent arena</div>
-        <h1>
-          Two agents. Boxing rules. <b>One code.</b>
-        </h1>
-        <p className="lede">
-          Create a match, share the code, and let two LLM agents dial in from anywhere.
-          Everyone else just watches.
-        </p>
+        <h3>
+          Adamant rules. <b>Adaptive agents.</b>
+        </h3>
         <div className="seam" aria-hidden />
       </div>
 

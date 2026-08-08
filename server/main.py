@@ -7,6 +7,7 @@ shell around the pure engine.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ from . import bots, corner_client, llm_agents, matchlog, protocol
 from .engine import rules
 from .engine.resolver import CORNERS
 from .engine.strategies import LADDER, CycleBot
-from .match import ABANDONED, FINISHED, LOBBY, LifecycleError, MatchConfig
+from .match import ABANDONED, FINISHED, LOBBY, PAUSED, LifecycleError, MatchConfig
 from .registry import Registry
 
 
@@ -41,6 +42,9 @@ logger = logging.getLogger("arena")
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "out"
 
+#: How long a connected socket has to send its opening `join` or `resume`.
+JOIN_TIMEOUT_SECONDS = 10.0
+
 registry = Registry()
 
 
@@ -58,7 +62,7 @@ async def lifespan(app: FastAPI):
         await corner_client.shutdown()
 
 
-app = FastAPI(title="ADAM Arena", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Adamant", version="0.1.0", lifespan=lifespan)
 
 # CORS is locked to the frontend origin. Unset means same-origin only, which is the
 # deployed shape — the API and the static export are served by this one process.
@@ -404,15 +408,29 @@ async def rematch(
 async def ws_join(websocket: WebSocket, code: str):
     await websocket.accept()
 
-    match = registry.get(code)
-    if match is None:
-        await websocket.send_json(protocol.error("invalid_code"))
+    # The opening frame is read *before* the code is resolved, and that order is
+    # load-bearing. Closing a socket while the client's `join` is still sitting
+    # unread in the receive buffer discards the `error` frame already written to it,
+    # so every agent that mistyped its code — which is every agent's first mistake —
+    # saw the socket close in silence instead of being told `invalid_code`. Reading
+    # first leaves nothing unread, and the frame arrives. The timeout is what the
+    # old order gave for free: a client that connects and never speaks is let go
+    # rather than holding a socket open indefinitely.
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), JOIN_TIMEOUT_SECONDS)
+        first = json.loads(raw)
+    except WebSocketDisconnect:
+        return
+    except (asyncio.TimeoutError, json.JSONDecodeError, UnicodeDecodeError):
+        # Unparseable, or nothing at all. `expected_join` is the accurate reason for
+        # both, and saying so beats the silent close builders used to get.
+        await websocket.send_json(protocol.error("expected_join"))
         await websocket.close()
         return
 
-    try:
-        first = json.loads(await websocket.receive_text())
-    except (json.JSONDecodeError, WebSocketDisconnect):
+    match = registry.get(code)
+    if match is None:
+        await websocket.send_json(protocol.error("invalid_code"))
         await websocket.close()
         return
 
@@ -427,9 +445,6 @@ async def ws_join(websocket: WebSocket, code: str):
                 preferred=first.get("corner"),
             )
         else:
-            # Not `invalid_code`: the code resolved fine, the client simply opened
-            # with the wrong frame. Reporting a good code as invalid sends builders
-            # hunting the one thing that is not wrong (spec §6.2).
             raise protocol.JoinError("expected_join")
     except protocol.JoinError as exc:
         await websocket.send_json(protocol.error(exc.reason))
@@ -506,6 +521,16 @@ async def ws_watch(websocket: WebSocket, code: str):
                 )
         if match.log.match_end:
             await websocket.send_json(match.log.match_end)
+        elif match.status == PAUSED:
+            # `match_paused` was broadcast once, when the corner dropped. Anyone who
+            # arrived or reconnected since would otherwise watch a frozen arena with
+            # no overlay and no explanation (spec §6.4).
+            for corner in match.missing_corners():
+                await websocket.send_json(
+                    match.paused_payload(
+                        match.state.tick + 1, corner, match.resume_window_left_ms()
+                    )
+                )
 
         while True:
             await websocket.receive_text()  # read-only; inbound frames are ignored

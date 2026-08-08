@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "The whole clip library for ADAM Arena, authored as data (docs/skeleton.md conventions).",
+    "The whole clip library for Adamant, authored as data (docs/skeleton.md conventions).",
     "",
     "Poses are joint -> {x,y,z} rotation OFFSETS FROM THE T-POSE REST, in degrees, exactly as",
     "docs/skeleton.md defines them. 'stance' is the named STANCE pose: the visual origin.",
@@ -26,7 +26,7 @@
     "floor while the knees bend. 'ko' opts out and authors its own fall.",
     "",
     "'f' is a frame index at 30 fps; 'frames' is the clip length in frames.",
-    "Clip name IS the action name from arena_spec.md 2 — no mapping table anywhere."
+    "Clip name IS the action name from adamant_spec.md 2 — no mapping table anywhere."
   ],
   "fps": 30,
   "stance": {
@@ -455,7 +455,7 @@
     },
 
     "idle": {
-      "_note": "The idle ACTION (arena_spec 2: +20 stamina). Deliberately distinct from the stance loop — the guard comes down, the hands unclench, the chest fills, and the guard goes back up — so a spectator can see a fighter choosing to recover. See SPEC_NOTES.md #3.",
+      "_note": "The idle ACTION (adamant_spec 2: +20 stamina). Deliberately distinct from the stance loop — the guard comes down, the hands unclench, the chest fills, and the guard goes back up — so a spectator can see a fighter choosing to recover. See SPEC_NOTES.md #3.",
       "frames": 45,
       "keys": [
         { "f": 0, "pose": {} },
@@ -510,7 +510,7 @@
     },
 
     "void": {
-      "_note": "Played INSTEAD OF the action's own clip when the tick carried a 'void' event for this fighter (arena_spec 4.6, the repeat cap). The punch never happened, so no strike clip may play: the lead hand loads, jams a third of the way out, stutters against the block and drops back to guard. Event-driven like 'exhausted', not a ninth action — clip name is still the action name everywhere else. See SPEC_NOTES.md #13.",
+      "_note": "Played INSTEAD OF the action's own clip when the tick carried a 'void' event for this fighter (adamant_spec 4.6, the repeat cap). The punch never happened, so no strike clip may play: the lead hand loads, jams a third of the way out, stutters against the block and drops back to guard. Event-driven like 'exhausted', not a ninth action — clip name is still the action name everywhere else. See SPEC_NOTES.md #13.",
       "frames": 16,
       "keys": [
         { "f": 0, "pose": {} },
@@ -554,7 +554,7 @@
     },
 
     "exhausted": {
-      "_note": "Played instead of idle when the tick carried an 'exhausted' event (arena_spec 3): the action was unaffordable and got converted. Hands drop off the guard and open, the chest heaves — the stamina economy made legible. See SPEC_NOTES.md #4.",
+      "_note": "Played instead of idle when the tick carried an 'exhausted' event (adamant_spec 3): the action was unaffordable and got converted. Hands drop off the guard and open, the chest heaves — the stamina economy made legible. See SPEC_NOTES.md #4.",
       "frames": 45,
       "keys": [
         { "f": 0, "pose": {} },
@@ -668,7 +668,7 @@
     },
 
     "riposte": {
-      "_note": "Played on a 'dodged' event where this fighter is the defender (arena_spec 2 riposte, 5 chip damage). A short counter flick with the rear hand out of the slip — the same mechanics as the cross, half the commitment and half the travel.",
+      "_note": "Played on a 'dodged' event where this fighter is the defender (adamant_spec 2 riposte, 5 chip damage). A short counter flick with the rear hand out of the slip — the same mechanics as the cross, half the commitment and half the travel.",
       "frames": 12,
       "keys": [
         { "f": 0, "pose": {} },

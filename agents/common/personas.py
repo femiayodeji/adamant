@@ -176,7 +176,7 @@ def prompt_version(persona: Persona | None) -> str:
 #: same match must not both draw the same fighter. It is a convenience for local
 #: simulation, never a correctness dependency -- every read and write is
 #: best-effort, and a missing or unwritable file just means an unbiased draw.
-CLAIM_FILE = Path(tempfile.gettempdir()) / "adam_arena_personas.json"
+CLAIM_FILE = Path(tempfile.gettempdir()) / "adamant_personas.json"
 
 #: Long enough to cover setting up a match by hand, short enough that yesterday's
 #: codes never constrain today's draw.

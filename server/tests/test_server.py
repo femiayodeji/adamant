@@ -137,8 +137,24 @@ async def test_a_third_agent_is_refused_as_match_full(arena):
 
 
 async def test_an_unknown_code_is_refused(arena):
+    """And the reason actually reaches a client that opened with its `join` — which
+    is every real agent, and the regression that made a mistyped code undebuggable.
+
+    The code used to be resolved before anything was read, so the socket was closed
+    with the client's `join` still unread in the buffer, and a close with unread data
+    discards the `error` frame already written to it. Builders saw the socket shut in
+    silence. Reading the opening frame first is what makes the reason arrive.
+    """
     agent = await Agent.connect(arena, "NOPE-XXX")
-    assert (await agent.recv()) == {"type": "error", "reason": "invalid_code"}
+    assert await agent.join("Alpha") == {"type": "error", "reason": "invalid_code"}
+
+
+async def test_an_opening_frame_that_is_not_json_is_told_why(arena):
+    created = await arena.create_match()
+    agent = await Agent.connect(arena, created["match_code"])
+    await agent.send("{not json")
+
+    assert (await agent.recv()) == {"type": "error", "reason": "expected_join"}
 
 
 async def test_a_wrong_first_frame_is_not_reported_as_a_bad_code(arena):
@@ -392,6 +408,46 @@ async def test_rejected_submissions_are_recorded_with_their_cause(arena, payload
     result = await spectator.expect("tick_result", timeout=5)
     no_move = [e for e in result["events"] if e["type"] == "no_move"][0]
     assert no_move["cause"] == cause
+
+    await a.close()
+    await b.close()
+    await spectator.close()
+
+
+async def test_an_overdue_move_for_a_resolved_tick_does_not_relabel_the_next_no_move(arena):
+    """A slow agent must read as slow, not as one that cannot echo a tick number.
+
+    An agent that misses tick 1 answers it anyway, a moment late — so its overdue
+    move lands during tick 2. Scoring that as `wrong_tick` made every no-move after
+    the first report a protocol error, which is a different finding about the agent
+    and the whole reason the causes are recorded separately (spec §4.4). A move for a
+    tick already in the log is dropped like a duplicate.
+    """
+    created, a, b = await seated_match(arena, deadline_ms=500, max_ticks=2)
+    spectator = await Spectator.connect(arena, created["match_code"])
+    await arena.start(created["match_code"], created["host_token"])
+    for agent in (a, b):
+        await agent.expect("match_start")
+        await agent.expect("state_update")
+
+    await a.move(1, "jab")  # b misses tick 1 entirely
+    first = await spectator.expect("tick_result", timeout=5)
+
+    await a.expect("state_update")
+    await b.expect("state_update")
+    await b.move(1, "block_high")  # b's overdue answer to tick 1, arriving in tick 2
+    await a.move(2, "jab")  # and b misses tick 2 as well
+
+    second = await spectator.expect("tick_result", timeout=5)
+
+    causes = [
+        e["cause"]
+        for result in (first, second)
+        for e in result["events"]
+        if e["type"] == "no_move" and e["who"] == "agent_b"
+    ]
+    assert causes == ["timeout", "timeout"], causes
+    assert second["moves"]["agent_b"] is None, "the stale move must not resolve either"
 
     await a.close()
     await b.close()
@@ -658,6 +714,51 @@ async def test_a_knockout_ends_the_match_immediately(arena):
     # Unmarked, because Jab-bot spends every fourth tick blocking to reset its own
     # streak rather than throwing a jab that would void (spec §4.6).
     assert end["final_state"]["agent_a"]["hp"] == 100
+
+    await a.close()
+    await b.close()
+
+
+async def test_a_simultaneous_knockout_is_reported_as_a_draw(arena):
+    """Both fighters down on the same tick, over real sockets and into the log.
+
+    Two hooks a tick is a trade both ways (spec §4.2), so the pair fall together on
+    the seventh exchange. The engine settles this, but the thing worth proving is that
+    nothing between the resolver and the log picks a side: `match_end` carries
+    `winner: null` with `reason: "draw"`, identically for both corners, and the stored
+    log says the same after the fact.
+    """
+    created, a, b = await seated_match(arena, deadline_ms=1000, max_ticks=60)
+    await arena.start(created["match_code"], created["host_token"])
+    await a.expect("match_start")
+    await b.expect("match_start")
+
+    end_a = None
+    for _ in range(20):
+        message = await a.recv()
+        await b.recv()
+        if message["type"] == "match_end":
+            end_a = message
+            break
+        tick = message["tick"]
+        # hook is 15 stamina against 5 regen, so it is only affordable every other
+        # tick; idle in between keeps the pair in lockstep and never voids.
+        action = "hook" if tick % 2 else "idle"
+        await a.move(tick, action)
+        await b.move(tick, action)
+
+    assert end_a is not None, "the match never ended"
+    assert end_a["winner"] is None and end_a["reason"] == "draw"
+    assert end_a["final_state"]["agent_a"]["hp"] <= 0
+    assert end_a["final_state"]["agent_b"]["hp"] <= 0
+    assert end_a["final_state"]["agent_a"]["hp"] == end_a["final_state"]["agent_b"]["hp"]
+
+    logged = (await arena.get(f"/api/matches/{created['match_code']}/log")).json()
+    assert logged["match_end"] == end_a
+    assert [e["who"] for e in logged["ticks"][-1]["events"] if e["type"] == "ko"] == [
+        "agent_a",
+        "agent_b",
+    ], "both knockouts are in the log, and neither one won"
 
     await a.close()
     await b.close()

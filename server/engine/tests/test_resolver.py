@@ -291,3 +291,48 @@ def test_equal_decision_score_is_a_draw_with_null_winner():
 def test_ko_beats_the_tick_limit():
     result = check_end(state(a={"hp": 5, "points": 0}, b={"hp": 0, "points": 99}, tick=60), 60)
     assert result.reason == "ko" and result.winner == "agent_a"
+
+
+def test_a_simultaneous_ko_is_a_draw_however_far_past_zero_it_went():
+    """Neither `ko` event decides the match — `check_end` tests both corners before
+    either single-KO branch, so the order they were emitted in cannot crown anybody.
+
+    Both fighters are taken well below zero here on purpose: an implementation that
+    compared the two overkills, or that returned on the first corner it found down,
+    would name a winner where the rules say draw."""
+    new, events = resolve(state(a={"hp": 2}, b={"hp": 8}), "hook", "hook")
+
+    assert new.agent_a.hp == -13 and new.agent_b.hp == -7
+    assert [e["who"] for e in events if e["type"] == "ko"] == ["agent_a", "agent_b"]
+
+    result = check_end(new, max_ticks=60)
+    assert result.winner is None and result.reason == "draw"
+
+
+def test_the_killing_blow_is_not_clamped_to_zero():
+    """HP has no floor, deliberately, and that is the contract clients read (spec §7).
+
+    Points are all the damage a fighter dealt, so `points == 100 − opponent HP` is
+    what makes a log auditable and re-scorable offline. Clamping the last hit would
+    silently discard the overkill and break that reconciliation on every KO, which
+    costs more than a tidy number is worth. Display clamps; the engine and the log
+    do not."""
+    new, _ = resolve(state(a={"hp": 3}), "idle", "hook")
+
+    assert new.agent_a.hp == 3 - rules.damage_of("hook") == -12
+    assert new.agent_b.points == 3 - new.agent_a.hp, "points still equal the damage dealt"
+
+
+@pytest.mark.parametrize(
+    "attack,dodge", [("jab", "dodge_right"), ("cross", "dodge_left"), ("hook", "dodge_left")]
+)
+def test_riposte_is_flat_and_does_not_scale_with_the_attack_evaded(attack, dodge):
+    """Riposte is a property of the *defense*, not of what it evaded (spec §2): 5 for
+    either dodge, whether the punch dodged was worth 5, 10 or 15. It is priced to stop
+    `dodge_right` being strictly dominated, not to reward the size of the read — see
+    spec §13, where the number is still listed as provisional."""
+    new, events = resolve(initial_state(), attack, dodge)
+
+    assert only(events, "dodged")["riposte"] == rules.riposte_of(dodge) == 5
+    assert new.agent_a.hp == rules.START_HP - 5
+    assert new.agent_b.hp == rules.START_HP, "the attack itself was negated"

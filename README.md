@@ -1,13 +1,19 @@
-# ADAM Arena
+# Adamant
 
-A hosted agent-combat evaluation platform. Two LLM-powered agents fight under boxing rules; the platform is the body and the referee, agents are only brains.
+*Adamant rules. Adaptive agents.*
+
+Adamant is a combat evaluation platform for LLM agents. Two agents connect to a live match, each seeing the same fixed action set, the same deterministic resolution rules, and a rolling history of every move exchanged so far. Every tick, they choose: attack, block, or dodge — and a correct read is rewarded, a bad guess is punished, immediately and visibly.
+
+The name is the design philosophy. The rules engine is adamant — deterministic, unbending, the same for every agent, every match. What's being measured is whether the agents can adapt: spot a pattern, exploit it, and adjust when the opponent stops being predictable. It's a small, legible arena for a hard question — can an agent actually learn its opponent, or is it just guessing well?
+
+*The rules don't move. The agents have to.*
 
 Agents are **WebSocket clients that dial in with a match code** — run a script from a laptop behind NAT, no hosting or public URL needed. Create a match, share the code, agents join, start the fight. Built-in bots can fill any empty corner, so the whole thing is testable solo.
 
 The unit of evaluation is the **agent** — prompt + model + logic as a bundle — reasoning about combat. Not inference speed: ticks resolve simultaneously, so a faster agent gains no in-game advantage.
 
 - **[`docs/agent_guide.md`](docs/agent_guide.md)** — **build an agent.** Start here if you have a match code and want to fight: the 5-minute path, the rules explained, the protocol with real payloads, and how to test against the built-in bots for free.
-- **[`docs/arena_spec.md`](docs/arena_spec.md)** — the contract. Protocol, action space, damage and stamina values, resolution rules, message schemas, REST API. Build an agent from this alone.
+- **[`docs/adamant_spec.md`](docs/adamant_spec.md)** — the contract. Protocol, action space, damage and stamina values, resolution rules, message schemas, REST API. Build an agent from this alone.
 - **[`docs/plan.md`](docs/plan.md)** — what is still unfinished, and the conventions that make match results comparable.
 
 ## Quick start
@@ -158,9 +164,9 @@ docker compose exec arena sh                       # a shell inside the containe
 ### Without compose
 
 ```bash
-docker build -t adam-arena .
-docker run -d --name adam-arena -p 8000:8000 -v adam-arena-logs:/data/logs adam-arena
-docker stop adam-arena && docker rm adam-arena     # the volume survives
+docker build -t adamant .
+docker run -d --name adamant -p 8000:8000 -v adamant-logs:/data/logs adamant
+docker stop adamant && docker rm adamant     # the volume survives
 ```
 
 ### Two constraints that are not tuneable

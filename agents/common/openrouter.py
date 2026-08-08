@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: OpenRouter attributes traffic by these optional headers. Only the title is
 #: sent: there is no canonical public URL for this arena to claim.
-APP_TITLE = "ADAM Arena"
+APP_TITLE = "Adamant"
 
 
 class OpenRouterError(RuntimeError):

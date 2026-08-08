@@ -1,8 +1,8 @@
-# ADAM Arena — Rig Skeleton Map & Clip Conventions
+# Adamant — Rig Skeleton Map & Clip Conventions
 
 The joint map for the **Mixamo Xbot** rig (`statics/models/xbot.glb`), plus the conventions for authoring the combat animation clips built on it.
 
-**What consumes this:** the Phase 4 renderer ([`plan.md`](plan.md)). Each of the eight actions in [`arena_spec.md`](arena_spec.md) §2 gets one pre-baked keyframe clip per fighter, driven by these joints. Nothing in the rules engine or the protocol touches this file — agents submit intents, and the renderer alone decides what those look like.
+**What consumes this:** the Phase 4 renderer ([`plan.md`](plan.md)). Each of the eight actions in [`adamant_spec.md`](adamant_spec.md) §2 gets one pre-baked keyframe clip per fighter, driven by these joints. Nothing in the rules engine or the protocol touches this file — agents submit intents, and the renderer alone decides what those look like.
 
 **How to read the map:** all rotations are **offsets from the T-pose rest position, in degrees**. `0` on every axis is the rest pose. `range` is the usable envelope for each axis; going outside it produces visible mesh deformation. The `note` on each joint describes what its axes do in plain English, which is what makes the map usable directly in an LLM prompt for pose generation.
 
@@ -158,7 +158,7 @@ This distinction is the most common source of broken clips: an author reads "0 =
 
 ### Every clip starts and ends at `STANCE`
 
-Non-negotiable, and the reason is the clip queue. Ticks can resolve faster than a clip plays ([`arena_spec.md`](arena_spec.md) §13), so the renderer queues clips back to back. If clips do not share a common start and end pose, every transition pops. Blending between arbitrary poses would be the alternative and is far more work than authoring to a fixed anchor.
+Non-negotiable, and the reason is the clip queue. Ticks can resolve faster than a clip plays ([`adamant_spec.md`](adamant_spec.md) §13), so the renderer queues clips back to back. If clips do not share a common start and end pose, every transition pops. Blending between arbitrary poses would be the alternative and is far more work than authoring to a fixed anchor.
 
 ### Format
 
@@ -204,7 +204,7 @@ The legs are what buys both. Feet that stay planted give the body nothing to rot
 
 ### Action-to-clip binding
 
-Clip name **is** the action name from [`arena_spec.md`](arena_spec.md) §2 — `jab`, `cross`, `hook`, `block_high`, `block_low`, `dodge_left`, `dodge_right`, `idle`. The renderer looks clips up by the action string with no mapping table, so a rules-table rename is also a clip rename.
+Clip name **is** the action name from [`adamant_spec.md`](adamant_spec.md) §2 — `jab`, `cross`, `hook`, `block_high`, `block_low`, `dodge_left`, `dodge_right`, `idle`. The renderer looks clips up by the action string with no mapping table, so a rules-table rename is also a clip rename.
 
 The other six are named after **events and states, not actions**, and the renderer reaches them from `tick.events` rather than `tick.moves`. This is what lets the eight action clips keep their 1:1 naming rule:
 
