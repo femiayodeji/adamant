@@ -35,16 +35,23 @@ origin than the API. In the shape above it is not, so leave it unset.
 
 ## Render
 
-Not yet done — this is the plan for when you get to it. [`../render.yaml`](../render.yaml)
-is a starting blueprint; treat it as a draft and check it against Render's current
-schema, because it has never been deployed.
-
-Render builds the `Dockerfile` directly. The pieces that matter:
+[`../render.yaml`](../render.yaml) is the blueprint. To deploy: push the branch Render
+should track (the repo's default branch unless you change it in the dashboard), then
+**New → Blueprint** in the Render dashboard, pick this repo, and enter
+`OPENROUTER_API_KEY` when prompted, or leave it blank. Render builds the `Dockerfile`
+directly and every later push to that branch redeploys. The pieces that matter:
 
 - **`PORT`** — Render injects it and the container's `CMD` already reads it, so no
   rebuild or override is needed.
 - **Health check path** — `/api/health`, which returns `{"status": "ok", ...}`.
-- **Disk** — mount one at `/data/logs`. `ARENA_LOG_DIR` already points there.
+- **Disk** — mount one at `/data/logs`. `ARENA_LOG_DIR` already points there. A
+  fresh disk is root-owned and hides the ownership the image set at build time, so
+  the container starts as root, and `docker-entrypoint.sh` chowns the log directory
+  and then drops to the unprivileged `arena` user before uvicorn starts.
+- **Plan** — the blueprint currently says `free`, so there is **no disk**: logs are
+  written to the container filesystem and lost on every deploy, restart and
+  spin-down. To keep results, change it to `0.5c-512mb` (the smallest paid instance;
+  disks attach only to paid services) and uncomment the `disk:` block.
 - **Instance count** — one. See requirement 1 above.
 - **`OPENROUTER_API_KEY`** — optional, and a **secret**: set it in the dashboard, never
   in the blueprint. It is the one setting that costs money — with it, any host of a

@@ -36,14 +36,18 @@ COPY server/ ./server/
 COPY agents/ ./agents/
 COPY docs/ ./docs/
 COPY --from=frontend /build/out ./frontend/out
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # Match logs are the evaluation dataset and the crash-recovery substrate, not
 # scratch space. Mount a real volume here or a restart loses in-flight matches
 # and every result ever recorded.
+#
+# The image starts as root only so the entrypoint can chown a host-mounted disk
+# (a fresh Render disk is root-owned); it drops to `arena` before uvicorn starts.
 RUN useradd --create-home --uid 10001 arena \
     && mkdir -p /data/logs \
-    && chown -R arena:arena /data/logs /app
-USER arena
+    && chown -R arena:arena /data/logs /app \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 VOLUME ["/data/logs"]
 
 EXPOSE 8000
@@ -61,4 +65,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 #
 # $PORT is read at start so the same image runs on hosts that assign a port
 # (Render, Fly, Cloud Run) with no rebuild.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-graceful-shutdown 20"]

@@ -1,5 +1,5 @@
-# Render blueprint — DRAFT, never deployed. See docs/deploy.md before using it, and
-# check it against Render's current Blueprint schema.
+# Render blueprint. Checked against Render's Blueprint spec (render.com/docs/blueprint-spec)
+# in Nov 2026. Deploy it from the dashboard: New → Blueprint → pick this repo.
 #
 # The three settings that are not negotiable are explained in docs/deploy.md:
 # one instance, a persistent disk at /data/logs, and WebSocket-friendly timeouts.
@@ -10,18 +10,23 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter # free has no persistent disk and spins down; both lose match logs
+    # FREE FOR NOW, and free has two costs: it cannot attach a disk, so match logs
+    # live on the container filesystem and vanish on every deploy, restart and
+    # spin-down; and it sleeps after ~15 min idle (first request wakes it, ~1 min).
+    # To keep results: set `plan: 0.5c-512mb` (smallest paid) and uncomment `disk`.
+    plan: free
     region: oregon
     healthCheckPath: /api/health
 
     # The match registry is in-memory and tick loops are asyncio tasks in-process.
-    # A second instance would answer 404 for codes it has never seen.
+    # A second instance would answer 404 for codes it has never seen. Render also
+    # refuses to scale a service with a disk attached, so this is doubly pinned.
     numInstances: 1
 
-    disk:
-      name: arena-logs
-      mountPath: /data/logs
-      sizeGB: 1 # a match log is a few KB; 1 GB holds tens of thousands
+    # disk:
+    #   name: arena-logs
+    #   mountPath: /data/logs
+    #   sizeGB: 1 # a match log is a few KB; 1 GB holds tens of thousands
 
     envVars:
       # PORT is injected by Render and read by the container's CMD — do not set it.
